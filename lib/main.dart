@@ -251,12 +251,8 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     CookieManager cookieManager = CookieManager.instance();
     await cookieManager.deleteAllCookies();
 
-    // 🎯 دامنه‌های اصلی تپسی که نیاز به کوکی دارند
-    List<String> baseDomains = [
-      ".tapsi.cab", 
-      ".tapsi.ir",
-      ".tapsi.markets"
-    ];
+    // 🎯 محدود کردن کوکی‌ها فقط به دامنه اصلی تاکسی
+    List<String> baseDomains = [".tapsi.cab", "app.tapsi.cab"];
 
     if (widget.cookies.isNotEmpty && widget.cookies != 'empty') {
       List<String> cookiePairs = widget.cookies.split(';');
@@ -299,9 +295,9 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         var host = window.location.hostname;
         var jwt = "$_extractedJwt";
         
-        // 🎯 تزریق دیتای لوکال استوریج فقط به اپلیکیشن تاکسی و اکانت (SSO)
-        // مارکت به حال خود رها می‌شود تا فرآیند طبیعی را طی کند و کرش نکند
-        if (host.includes('tapsi.cab') || host.includes('accounts.tapsi.ir')) {
+        // 🎯 استراتژی مرورگر: کد تزریق ما فقط و فقط در دامنه app.tapsi.cab (تاکسی) اجرا می‌شود!
+        // بقیه سایت‌ها (مثل مارکت، لاگین و ...) به حال خود رها می‌شوند تا مثل یک مرورگر عادی کار کنند
+        if (host === 'app.tapsi.cab') {
             if (jwt) {
                window.localStorage.setItem('token', jwt);
                window.localStorage.setItem('accessToken', jwt);
@@ -318,12 +314,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                }
             }
         }
-        
       } catch(e) {
         console.error("Injection Engine Error: ", e);
       }
       
-      // جلوگیری از باز شدن لینک‌ها در مرورگر خارجی
+      // جلوگیری از باز شدن لینک‌ها در مرورگر خارجی گوشی
       window.open = function(url, target, features) {
         window.location.href = url;
         return null;
@@ -382,6 +377,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               javaScriptEnabled: true,
               domStorageEnabled: true,
               clearCache: false,
+              // این گزینه اجازه می‌دهد کوکی‌ها و استوریج مثل کروم عمل کنند
               thirdPartyCookiesEnabled: true, 
               supportMultipleWindows: false,
               javaScriptCanOpenWindowsAutomatically: false,
@@ -391,6 +387,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               webViewController = controller;
             },
             onLoadStop: (controller, url) async {
+              // فقط اگر در دامنه اصلی تاکسی بودیم یک بار رفرش می‌کنیم تا اطلاعات بنشیند
               if (url != null && url.host == 'app.tapsi.cab') {
                 bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
                 if (!isReloaded) {
