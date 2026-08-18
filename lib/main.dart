@@ -251,10 +251,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     CookieManager cookieManager = CookieManager.instance();
     await cookieManager.deleteAllCookies();
 
-    List<String> targetDomains = [
-      ".tapsi.cab", "app.tapsi.cab", 
-      ".tapsi.ir", "accounts.tapsi.ir",
-      ".tapsi.markets", "www.tapsi.markets"
+    // 🎯 دامنه‌های اصلی تپسی که نیاز به کوکی دارند
+    List<String> baseDomains = [
+      ".tapsi.cab", 
+      ".tapsi.ir",
+      ".tapsi.markets"
     ];
 
     if (widget.cookies.isNotEmpty && widget.cookies != 'empty') {
@@ -265,7 +266,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
           String name = parts[0].trim();
           String value = parts.sublist(1).join('=').trim();
           
-          for (String d in targetDomains) {
+          for (String d in baseDomains) {
             String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
             await cookieManager.setCookie(
               url: WebUri(urlStr), name: name, value: value, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -276,7 +277,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     }
 
     if (_extractedJwt.isNotEmpty) {
-      for (String d in targetDomains) {
+      for (String d in baseDomains) {
         String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
         await cookieManager.setCookie(
           url: WebUri(urlStr), name: "token", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -284,11 +285,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         await cookieManager.setCookie(
           url: WebUri(urlStr), name: "accessToken", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
         );
-        if (d.contains('tapsi.markets')) {
-          await cookieManager.setCookie(
-            url: WebUri(urlStr), name: "tokenMS", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
-          );
-        }
       }
     }
 
@@ -302,79 +298,32 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       try {
         var host = window.location.hostname;
         var jwt = "$_extractedJwt";
-        var rawData = $safeLs;
-        var lsData = {};
-
-        try {
-            if (rawData && rawData !== '{}') {
-                lsData = JSON.parse(rawData);
-            }
-        } catch(e) {}
-
-        // استخراج اطلاعات واقعی کاربر از استوریج تاکسی
-        var userObj = {};
-        if (lsData['user']) {
-            try { userObj = typeof lsData['user'] === 'string' ? JSON.parse(lsData['user']) : lsData['user']; } catch(e) {}
-        }
-
-        // تزریق اطلاعات برای تپسی تاکسی
-        if (host.includes('tapsi.cab') || host.includes('tapsi.ir')) {
+        
+        // 🎯 تزریق دیتای لوکال استوریج فقط به اپلیکیشن تاکسی و اکانت (SSO)
+        // مارکت به حال خود رها می‌شود تا فرآیند طبیعی را طی کند و کرش نکند
+        if (host.includes('tapsi.cab') || host.includes('accounts.tapsi.ir')) {
             if (jwt) {
                window.localStorage.setItem('token', jwt);
                window.localStorage.setItem('accessToken', jwt);
                window.localStorage.setItem('isSignedIn', 'true');
             }
-            for (var key in lsData) {
-               var val = typeof lsData[key] === 'string' ? lsData[key] : JSON.stringify(lsData[key]);
-               window.localStorage.setItem(key, val);
-               window.sessionStorage.setItem(key, val);
+            
+            var rawData = $safeLs;
+            if (rawData && rawData !== '{}') {
+               var lsData = JSON.parse(rawData);
+               for (var key in lsData) {
+                  var val = typeof lsData[key] === 'string' ? lsData[key] : JSON.stringify(lsData[key]);
+                  window.localStorage.setItem(key, val);
+                  window.sessionStorage.setItem(key, val);
+               }
             }
         }
-
-        // 🎯 تزریق مهندسی شده و کامل برای تپسی مارکت
-        if (host.includes('tapsi.markets')) {
-            window.localStorage.setItem('tokenMS', jwt);
-            window.localStorage.setItem('token', jwt);
-            window.localStorage.setItem('accessToken', jwt);
-            window.localStorage.setItem('isSignedIn', 'true');
-
-            userObj.token = jwt;
-
-            // شبیه‌سازی دقیق Redux Persist مارکت
-            var persistRoot = {
-                user: JSON.stringify({ state: { user: userObj, expireTime: 0, refreshToken: "" }, version: 0 }),
-                cart: JSON.stringify({ state: { cartData: [], productQuantities: {}, totalCartsCount: 0, totalCartPrice: 0, storeDeliveryMethods: {} }, version: 0 }),
-                mapInfo: JSON.stringify({ state: { defaultViewPort: { latitude: 35.6997, longitude: 51.3380, id: 129, name: "تهران" }, searchCity: "", searchLocation: "", filteredCities: [], searchLocationResult: [], mapIsTouched: false, eventStartTime: 0, zoomMeasure: 15 }, version: 0 }),
-                wallet: JSON.stringify({ state: { selectedPriceState: null }, version: 0 }),
-                route: JSON.stringify({ state: { fromRoute: "", data: null }, version: 0 }),
-                _persist: JSON.stringify({ version: -1, rehydrated: true })
-            };
-            window.localStorage.setItem('persist:root', JSON.stringify(persistRoot));
-
-            var rootDomain = host.split('.').slice(-2).join('.');
-            
-            // کوکی Profile کاربر
-            var cookieUserObj = Object.assign({}, userObj);
-            delete cookieUserObj.token;
-            document.cookie = "user=" + encodeURIComponent(JSON.stringify(cookieUserObj)) + "; path=/; domain=." + rootDomain + "; secure; samesite=none";
-            document.cookie = "tokenMS=" + jwt + "; path=/; domain=." + rootDomain + "; secure; samesite=none";
-        }
         
-        // 🎯 تله مسدودسازی درخواست خروج (Anti-Logout)
-        var originalFetch = window.fetch;
-        window.fetch = async function() {
-          var url = typeof arguments[0] === 'string' ? arguments[0] : (arguments[0].url || '');
-          if (url.includes('logout.json')) {
-              // برگرداندن یک پاسخ جعلی موفقیت‌آمیز برای جلوگیری از پاک شدن استوریج
-              return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
-          }
-          return originalFetch.apply(this, arguments);
-        };
-
       } catch(e) {
         console.error("Injection Engine Error: ", e);
       }
       
+      // جلوگیری از باز شدن لینک‌ها در مرورگر خارجی
       window.open = function(url, target, features) {
         window.location.href = url;
         return null;
@@ -400,7 +349,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             children: const [
               SizedBox(width: 40, height: 40, child: CircularProgressIndicator(color: Color(0xFF5CEBFF), strokeWidth: 2)),
               SizedBox(height: 24),
-              Text('INITIALIZING CORE ENGINE...', style: TextStyle(color: Color(0xFF5CEBFF), letterSpacing: 3.0, fontSize: 11, fontWeight: FontWeight.bold)),
+              Text('INITIALIZING...', style: TextStyle(color: Color(0xFF5CEBFF), letterSpacing: 3.0, fontSize: 11, fontWeight: FontWeight.bold)),
             ],
           )
         )
@@ -440,16 +389,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             ),
             onWebViewCreated: (controller) {
               webViewController = controller;
-            },
-            // 🎯 تله مسدودسازی ریدایرکت به صفحه شماره موبایل
-            shouldOverrideUrlLoading: (controller, navigationAction) async {
-              var uri = navigationAction.request.url!;
-              if (uri.host == 'accounts.tapsi.ir' && uri.path.contains('login')) {
-                 // هدایت اجباری به داخل فروشگاه تپسی مارکت
-                 await controller.loadUrl(urlRequest: URLRequest(url: WebUri("https://www.tapsi.markets/")));
-                 return NavigationActionPolicy.CANCEL;
-              }
-              return NavigationActionPolicy.ALLOW;
             },
             onLoadStop: (controller, url) async {
               if (url != null && url.host == 'app.tapsi.cab') {
