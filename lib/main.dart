@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:dio/dio.dart'; // 🚀 پکیج Dio برای دور زدن فایروال مارکت
 import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -214,7 +213,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   InAppWebViewController? webViewController;
   bool _isEngineReady = false;
   String _extractedJwt = '';
-  String _extractedRefreshToken = '';
 
   @override
   void initState() {
@@ -223,99 +221,36 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     _initializeEngine();
   }
 
-  // استخراج توکن‌های اصلی به صورت دقیق
   void _extractToken() {
     try {
       RegExp exp1 = RegExp(r'"accessToken"\s*:\s*"([^"]+)"');
       var match1 = exp1.firstMatch(widget.localStorageStr);
       if (match1 != null) {
         _extractedJwt = match1.group(1)!;
-      } else {
-        RegExp exp2 = RegExp(r'"token"\s*:\s*"([^"]+)"');
-        var match2 = exp2.firstMatch(widget.localStorageStr);
-        if (match2 != null) _extractedJwt = match2.group(1)!;
+        return;
       }
-
-      RegExp expRef = RegExp(r'"refreshToken"\s*:\s*"([^"]+)"');
-      var matchRef = expRef.firstMatch(widget.localStorageStr);
-      if (matchRef != null) {
-        _extractedRefreshToken = matchRef.group(1)!;
+      RegExp exp2 = RegExp(r'"token"\s*:\s*"([^"]+)"');
+      var match2 = exp2.firstMatch(widget.localStorageStr);
+      if (match2 != null) {
+        _extractedJwt = match2.group(1)!;
+        return;
+      }
+      RegExp exp3 = RegExp(r'"(eyJ[a-zA-Z0-9-_.]+)"');
+      var match3 = exp3.firstMatch(widget.localStorageStr);
+      if (match3 != null) {
+        _extractedJwt = match3.group(1)!;
       }
     } catch (e) {
       debugPrint("Token extraction failed.");
     }
   }
 
-  // 🚀 این تابع معجزه‌ی ماست: کوکی‌های اختصاصی مارکت را می‌دزدد
-  Future<void> _prepareMarketSSO(String jwt, String refToken) async {
-    try {
-      final dio = Dio(BaseOptions(
-        followRedirects: false, // 👈 باید فالس باشد تا لینک را شکار کنیم
-        validateStatus: (status) => true,
-        connectTimeout: const Duration(seconds: 5), // برای جلوگیری از گیر کردن لودینگ
-        receiveTimeout: const Duration(seconds: 5),
-      ));
-
-      final ssoUrl = "https://accounts.tapsi.ir/silent-signin?client_id=com.okala&scope=okala_access&redirect_uri=https%3A%2F%2Ftapsi.markets&response_type=code&prompt=none";
-
-      final ssoResponse = await dio.get(
-        ssoUrl,
-        options: Options(
-          headers: {
-            "Cookie": "accessToken=$jwt; refreshToken=$refToken;",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-          },
-        ),
-      );
-
-      if (ssoResponse.statusCode == 302 || ssoResponse.statusCode == 301 || ssoResponse.statusCode == 307) {
-        final redirectUrl = ssoResponse.headers.value('location');
-        if (redirectUrl != null && redirectUrl.contains('code=')) {
-          // ارسال کد به سرور مارکت برای دریافت کوکی‌های نهایی
-          final marketResponse = await dio.get(
-            redirectUrl,
-            options: Options(headers: {
-              "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-            }),
-          );
-
-          final rawCookies = marketResponse.headers.map['set-cookie'] ?? marketResponse.headers.map['Set-Cookie'];
-          if (rawCookies != null) {
-            CookieManager cookieManager = CookieManager.instance();
-            for (var cookieStr in rawCookies) {
-              final parts = cookieStr.split(';');
-              if (parts.isNotEmpty) {
-                final nameValue = parts[0].split('=');
-                if (nameValue.length >= 2) {
-                  final name = nameValue[0].trim();
-                  final value = nameValue.sublist(1).join('=').trim();
-
-                  // کاشتن کوکی‌ها منحصراً برای دامنه‌های مارکت
-                  await cookieManager.setCookie(
-                    url: WebUri("https://tapsi.markets"),
-                    name: name, value: value, domain: ".tapsi.markets", isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
-                  );
-                  await cookieManager.setCookie(
-                    url: WebUri("https://www.tapsi.markets"),
-                    name: name, value: value, domain: "www.tapsi.markets", isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
-                  );
-                }
-              }
-            }
-            debugPrint("✅ کوکی‌های مارکت با موفقیت شکار و نصب شد!");
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint("❌ خطا در اجرای SSO مارکت: $e");
-    }
-  }
-
   Future<void> _initializeEngine() async {
     CookieManager cookieManager = CookieManager.instance();
     
-    // ⚠️ مهم: کوکی‌های تاکسی را دیگر به مارکت نمی‌دهیم تا ارور ندهد
-    List<String> cabDomains = [
+    // 🚨 ترفند اصلی اینجاست: دامنه‌های مارکت به طور کامل از لیست هدف حذف شدند!
+    // تا توکن تاکسی وارد مارکت نشود و سشن اصلی آن را خراب نکند.
+    List<String> targetDomains = [
       ".tapsi.cab", "app.tapsi.cab", "api.tapsi.cab", 
       ".tapsi.ir", "accounts.tapsi.ir", "accounts-api.tapsi.ir"
     ];
@@ -327,7 +262,8 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         if (parts.length >= 2) {
           String name = parts[0].trim();
           String value = parts.sublist(1).join('=').trim();
-          for (String d in cabDomains) {
+          
+          for (String d in targetDomains) {
             String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
             await cookieManager.setCookie(
               url: WebUri(urlStr), name: name, value: value, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -338,7 +274,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     }
 
     if (_extractedJwt.isNotEmpty) {
-      for (String d in cabDomains) {
+      for (String d in targetDomains) {
         String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
         await cookieManager.setCookie(
           url: WebUri(urlStr), name: "token", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -347,18 +283,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
           url: WebUri(urlStr), name: "accessToken", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
         );
       }
-      
-      if (_extractedRefreshToken.isNotEmpty) {
-        for (String d in cabDomains) {
-          String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
-          await cookieManager.setCookie(
-            url: WebUri(urlStr), name: "refreshToken", value: _extractedRefreshToken, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
-          );
-        }
-      }
-
-      // 🚀 اینجا توکن مارکت را شکار می‌کنیم (حداکثر 3-4 ثانیه طول می‌کشد)
-      await _prepareMarketSSO(_extractedJwt, _extractedRefreshToken);
     }
 
     setState(() => _isEngineReady = true);
@@ -370,13 +294,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     return """
       try {
         var jwt = "$_extractedJwt";
-        var ref = "$_extractedRefreshToken";
         if (jwt) {
            window.localStorage.setItem('token', jwt);
            window.localStorage.setItem('accessToken', jwt);
-           if (ref) window.localStorage.setItem('refreshToken', ref);
            
-           // کوکی‌ها فقط در دامنه‌های مجاز ست می‌شوند تا مارکت را خراب نکنند
+           // تزریق فقط برای دامنه اصلی تاکسی انجام می‌شود
            document.cookie = "token=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
            document.cookie = "accessToken=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
         }
@@ -451,7 +373,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               domStorageEnabled: true,
-              clearCache: false, // 👈 بسیار مهم: این باید فالس باشد تا نشست مارکت از بین نرود
+              clearCache: false, // جلوگیری از پاک شدن کوکی‌های طبیعی مارکت
               thirdPartyCookiesEnabled: true, 
               supportMultipleWindows: false,
               javaScriptCanOpenWindowsAutomatically: false,
@@ -461,12 +383,10 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               webViewController = controller;
             },
             onLoadStop: (controller, url) async {
-              if (url != null && url.toString().contains('app.tapsi.cab')) {
-                bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
-                if (!isReloaded) {
-                  await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
-                  controller.reload();
-                }
+              bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
+              if (!isReloaded) {
+                await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
+                controller.reload();
               }
             },
           ),
