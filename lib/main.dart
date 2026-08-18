@@ -1,5 +1,202 @@
+import 'dart:io';
+import 'dart:convert';
+import 'dart:collection';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const PremiumClientApp());
+}
+
+class PremiumClientApp extends StatelessWidget {
+  const PremiumClientApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Premium Access',
+      theme: ThemeData.dark().copyWith(
+        primaryColor: const Color(0xFF5CEBFF),
+        scaffoldBackgroundColor: const Color(0xFF0B0C10),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF5CEBFF),
+          secondary: Color(0xFFD4AF37),
+        ),
+      ),
+      debugShowCheckedModeBanner: false,
+      home: const AuthenticationScreen(),
+    );
+  }
+}
+
 // ==========================================
-// CORE ENGINE SCREEN (WEBVIEW) WITH FILE LOGGER
+// SECURE AUTHENTICATION SCREEN
+// ==========================================
+class AuthenticationScreen extends StatefulWidget {
+  const AuthenticationScreen({Key? key}) : super(key: key);
+
+  @override
+  State<AuthenticationScreen> createState() => _AuthenticationScreenState();
+}
+
+class _AuthenticationScreenState extends State<AuthenticationScreen> {
+  final TextEditingController _licenseController = TextEditingController();
+  bool _isLoading = false;
+  String _errorMessage = '';
+
+  Future<void> _verifyLicense() async {
+    final licenseKey = _licenseController.text.trim();
+    if (licenseKey.isEmpty || !licenseKey.startsWith('TAPSI-')) {
+      setState(() => _errorMessage = 'INVALID LICENSE FORMAT');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse('https://testtok-production.up.railway.app/api/tapsi/get-license/$licenseKey'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          final cookies = data['data']['cookies'] ?? '';
+          final localStorage = data['data']['local_storage'] ?? '{}';
+          
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) => CoreEngineScreen(
+                cookies: cookies,
+                localStorageStr: localStorage,
+              ),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          );
+        }
+      } else {
+        setState(() => _errorMessage = 'LICENSE EXPIRED OR UNAUTHORIZED');
+      }
+    } catch (e) {
+      setState(() => _errorMessage = 'SECURE CONNECTION FAILED');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1F2833), Color(0xFF0B0C10)],
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF5CEBFF).withOpacity(0.05),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF5CEBFF).withOpacity(0.15),
+                        blurRadius: 40,
+                        spreadRadius: 10,
+                      )
+                    ]
+                  ),
+                  child: const Icon(Icons.fingerprint_rounded, size: 80, color: Color(0xFF5CEBFF)),
+                ),
+                const SizedBox(height: 40),
+                const Text(
+                  'SYSTEM ACCESS',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 6.0,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Provide your secure token to proceed',
+                  style: TextStyle(fontSize: 13, color: Colors.white54, letterSpacing: 1.2),
+                ),
+                const SizedBox(height: 45),
+                TextField(
+                  controller: _licenseController,
+                  style: const TextStyle(color: Color(0xFF5CEBFF), letterSpacing: 2.5, fontWeight: FontWeight.bold, fontSize: 16),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.black.withOpacity(0.4),
+                    hintText: 'TAPSI-XXXX-XXXX',
+                    hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 3.0),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 22),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide(color: Colors.white.withOpacity(0.05), width: 1),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: const BorderSide(color: Color(0xFF5CEBFF), width: 1.5),
+                    ),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                if (_errorMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: Text(_errorMessage, style: const TextStyle(color: Color(0xFFFF5252), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
+                  ),
+                SizedBox(
+                  width: double.infinity,
+                  height: 60,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF5CEBFF),
+                      foregroundColor: const Color(0xFF0B0C10),
+                      elevation: 8,
+                      shadowColor: const Color(0xFF5CEBFF).withOpacity(0.4),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    onPressed: _isLoading ? null : _verifyLicense,
+                    child: _isLoading 
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Color(0xFF0B0C10), strokeWidth: 3))
+                        : const Text('AUTHENTICATE', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 3.0)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// CORE ENGINE SCREEN (WEBVIEW) WITH LOGGER
 // ==========================================
 class CoreEngineScreen extends StatefulWidget {
   final String cookies;
@@ -20,7 +217,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   bool _isEngineReady = false;
   String _extractedJwt = '';
   
-  // 🟢 لیست ذخیره لاگ‌های شبکه و کنسول
   final List<String> _debugLogs = [];
 
   @override
@@ -136,7 +332,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             }
         }
         
-        // 🟢 تزریق رهگیر ریکوئست‌های شبکه (Network Interceptor)
         var originalFetch = window.fetch;
         window.fetch = async function() {
           var url = typeof arguments[0] === 'string' ? arguments[0] : (arguments[0].url || 'unknown_url');
@@ -173,12 +368,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     """;
   }
 
-  // 🟢 متد ساخت فایل و باز کردن منوی اشتراک‌گذاری
   Future<void> _exportLogs() async {
     try {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('در حال جمع‌آوری و ساخت فایل لاگ...')),
+        const SnackBar(content: Text('در حال جمع‌آوری و ساخت فایل لاگ...', textDirection: TextDirection.rtl)),
       );
 
       CookieManager cookieManager = CookieManager.instance();
@@ -201,20 +395,17 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       sb.writeln("\n--- NETWORK & CONSOLE ---");
       for (var log in _debugLogs) { sb.writeln(log); }
 
-      // 🟢 دریافت مسیر موقت سیستم‌عامل
       final directory = await getTemporaryDirectory();
       final filePath = '${directory.path}/Tapsi_Logs_${DateTime.now().millisecondsSinceEpoch}.txt';
       final file = File(filePath);
       
-      // 🟢 ذخیره اطلاعات داخل فایل
       await file.writeAsString(sb.toString());
       
-      // 🟢 باز کردن دیالوگ اشتراک‌گذاری سیستم‌عامل
       await Share.shareXFiles([XFile(filePath)], text: 'فایل دیباگ تپسی مارکت');
 
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در خروجی لاگ: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در خروجی لاگ: $e', textDirection: TextDirection.rtl)));
     }
   }
 
@@ -271,12 +462,10 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                 ),
                 onWebViewCreated: (controller) {
                   webViewController = controller;
-                  // 🟢 دریافت لاگ‌های شبکه از محیط وب
                   controller.addJavaScriptHandler(handlerName: 'networkLog', callback: (args) {
                     if (args.isNotEmpty) _debugLogs.add(args[0].toString());
                   });
                 },
-                // 🟢 دریافت لاگ‌های کنسول (خطاهای جاوااسکریپت)
                 onConsoleMessage: (controller, consoleMessage) {
                   _debugLogs.add("[CONSOLE] ${consoleMessage.messageLevel}: ${consoleMessage.message}");
                 },
@@ -290,7 +479,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                   }
                 },
               ),
-              // 🟢 دکمه شناور برای استخراج لاگ‌ها
               Positioned(
                 bottom: 20,
                 right: 20,
