@@ -1,12 +1,9 @@
-import 'dart:io';
 import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -197,7 +194,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
 }
 
 // ==========================================
-// CORE ENGINE SCREEN (WEBVIEW) WITH LOGGER
+// CORE ENGINE SCREEN (WEBVIEW) WITH IN-APP LOGGER
 // ==========================================
 class CoreEngineScreen extends StatefulWidget {
   final String cookies;
@@ -319,13 +316,25 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         var host = window.location.hostname;
         var jwt = "$_extractedJwt";
         
+        var rootDomain = host;
+        var parts = host.split('.');
+        if (parts.length > 2) {
+            rootDomain = '.' + parts.slice(-2).join('.');
+        } else {
+            rootDomain = '.' + host;
+        }
+
         if (jwt) {
            window.localStorage.setItem('token', jwt);
            window.localStorage.setItem('accessToken', jwt);
            window.localStorage.setItem('isSignedIn', 'true');
            
+           document.cookie = "token=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
+           document.cookie = "accessToken=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
+           
            if (host.includes('tapsi.markets')) {
                window.localStorage.setItem('tokenMS', jwt);
+               document.cookie = "tokenMS=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
            }
         }
         
@@ -333,6 +342,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         if (rawData && rawData !== '{}') {
            var lsData = JSON.parse(rawData);
            for (var key in lsData) {
+              // 🚨 حل ارور 400: جلوگیری از رونویسی استیت ریداکس مارکت با دیتای تاکسی
               if (host.includes('tapsi.markets') && (key === 'persist:root' || key === 'user')) {
                   continue;
               }
@@ -379,11 +389,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     """;
   }
 
-  Future<void> _exportLogs() async {
+  Future<void> _showLogViewer() async {
     try {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('در حال جمع‌آوری و ساخت فایل لاگ...', textDirection: TextDirection.rtl)),
+        const SnackBar(content: Text('در حال استخراج لاگ‌ها...', textDirection: TextDirection.rtl)),
       );
 
       CookieManager cookieManager = CookieManager.instance();
@@ -406,17 +416,17 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       sb.writeln("\n--- NETWORK & CONSOLE ---");
       for (var log in _debugLogs.reversed) { sb.writeln(log); }
 
-      final directory = await getTemporaryDirectory();
-      final filePath = '${directory.path}/Tapsi_Logs_${DateTime.now().millisecondsSinceEpoch}.txt';
-      final file = File(filePath);
+      if (!mounted) return;
       
-      await file.writeAsString(sb.toString());
-      
-      await Share.shareXFiles([XFile(filePath)], text: 'فایل دیباگ تپسی مارکت');
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => LogViewerScreen(logs: sb.toString()),
+        ),
+      );
 
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا در خروجی لاگ: $e', textDirection: TextDirection.rtl)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e', textDirection: TextDirection.rtl)));
     }
   }
 
@@ -496,7 +506,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                 child: FloatingActionButton(
                   backgroundColor: const Color(0xFF5CEBFF),
                   mini: true,
-                  onPressed: _exportLogs,
+                  onPressed: _showLogViewer,
                   child: const Icon(Icons.bug_report_rounded, color: Colors.black),
                 ),
               ),
@@ -508,3 +518,43 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   }
 }
 
+// ==========================================
+// IN-APP LOG VIEWER SCREEN
+// ==========================================
+class LogViewerScreen extends StatelessWidget {
+  final String logs;
+
+  const LogViewerScreen({Key? key, required this.logs}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1F2833),
+      appBar: AppBar(
+        title: const Text('دیباگر تپسی', style: TextStyle(fontSize: 16)),
+        backgroundColor: const Color(0xFF0B0C10),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy_all_rounded, color: Color(0xFF5CEBFF)),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: logs));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('متن لاگ‌ها کپی شد!', textDirection: TextDirection.rtl), backgroundColor: Colors.green),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: SingleChildScrollView(
+          child: SelectableText(
+            logs,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.white70),
+            textDirection: TextDirection.ltr,
+          ),
+        ),
+      ),
+    );
+  }
+}
