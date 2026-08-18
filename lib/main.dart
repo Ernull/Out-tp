@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
@@ -194,7 +193,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen> {
 }
 
 // ==========================================
-// CORE ENGINE SCREEN (WEBVIEW) WITH IN-APP LOGGER
+// CORE ENGINE SCREEN (WEBVIEW)
 // ==========================================
 class CoreEngineScreen extends StatefulWidget {
   final String cookies;
@@ -214,8 +213,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   InAppWebViewController? webViewController;
   bool _isEngineReady = false;
   String _extractedJwt = '';
-  
-  final List<String> _debugLogs = [];
 
   @override
   void initState() {
@@ -226,13 +223,10 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
 
   void _extractToken() {
     try {
-      _debugLogs.add("[DART] Starting token extraction...");
-      
       RegExp cookieExp = RegExp(r'(?:accessToken|token)=(eyJ[a-zA-Z0-9-_.]+)');
       var cookieMatch = cookieExp.firstMatch(widget.cookies);
       if (cookieMatch != null) {
         _extractedJwt = cookieMatch.group(1)!;
-        _debugLogs.add("[DART] Token found in cookies.");
         return;
       }
 
@@ -240,7 +234,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       var lsMatch = lsExp.firstMatch(widget.localStorageStr);
       if (lsMatch != null) {
         _extractedJwt = lsMatch.group(1)!;
-        _debugLogs.add("[DART] Token found in localStorage.");
         return;
       }
 
@@ -248,12 +241,9 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       var fallbackMatch = fallbackExp.firstMatch(widget.cookies + widget.localStorageStr);
       if (fallbackMatch != null) {
         _extractedJwt = fallbackMatch.group(1)!;
-        _debugLogs.add("[DART] Token found via fallback regex.");
-      } else {
-        _debugLogs.add("[DART] CRITICAL ERROR: Could not find any JWT!");
       }
     } catch (e) {
-      _debugLogs.add("[DART] Token extraction failed: $e");
+      debugPrint("Token extraction failed: $e");
     }
   }
 
@@ -261,10 +251,10 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     CookieManager cookieManager = CookieManager.instance();
     await cookieManager.deleteAllCookies();
 
-    // 🎯 دامنه‌های مارکت به طور کامل حذف شدند تا هیچ دخالتی در آنها نداشته باشیم
-    List<String> baseDomains = [
-      ".tapsi.cab", 
-      ".tapsi.ir"
+    List<String> targetDomains = [
+      ".tapsi.cab", "app.tapsi.cab", "api.tapsi.cab", 
+      ".tapsi.ir", "accounts.tapsi.ir", "accounts-api.tapsi.ir",
+      ".tapsi.markets", "www.tapsi.markets"
     ];
 
     if (widget.cookies.isNotEmpty && widget.cookies != 'empty') {
@@ -275,7 +265,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
           String name = parts[0].trim();
           String value = parts.sublist(1).join('=').trim();
           
-          for (String d in baseDomains) {
+          for (String d in targetDomains) {
             String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
             await cookieManager.setCookie(
               url: WebUri(urlStr), name: name, value: value, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -286,7 +276,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     }
 
     if (_extractedJwt.isNotEmpty) {
-      for (String d in baseDomains) {
+      for (String d in targetDomains) {
         String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
         await cookieManager.setCookie(
           url: WebUri(urlStr), name: "token", value: _extractedJwt, domain: d, isSecure: true, sameSite: HTTPCookieSameSitePolicy.NONE,
@@ -306,27 +296,22 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     return """
       try {
         var host = window.location.hostname;
+        var jwt = "$_extractedJwt";
         
-        // 🎯 قرنطینه کردن کامل اسکریپت: این دیتای استخراج شده فقط باید روی اپلیکیشن تاکسی بنشیند
-        // مارکت کاملاً رها می‌شود تا خودکار توکن اصلی‌اش را دریافت کند
-        if (host === 'app.tapsi.cab' || host === 'tapsi.cab' || host === 'accounts.tapsi.ir') {
-            var jwt = "$_extractedJwt";
-            
+        // 🎯 حل نهایی: تزریق توکن به صفحه اصلی اکانت (SSO) تا متوجه شود لاگین هستیم
+        if (host.includes('accounts.tapsi.ir')) {
+            if (jwt) {
+               window.localStorage.setItem('token', jwt);
+               window.localStorage.setItem('accessToken', jwt);
+            }
+        }
+        
+        // تزریق کامل دیتای لوکال استوریج فقط به اپلیکیشن تاکسی
+        if (host === 'app.tapsi.cab' || host === 'tapsi.cab') {
             if (jwt) {
                window.localStorage.setItem('token', jwt);
                window.localStorage.setItem('accessToken', jwt);
                window.localStorage.setItem('isSignedIn', 'true');
-               
-               var rootDomain = host;
-               var parts = host.split('.');
-               if (parts.length > 2) {
-                   rootDomain = '.' + parts.slice(-2).join('.');
-               } else {
-                   rootDomain = '.' + host;
-               }
-               
-               document.cookie = "token=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
-               document.cookie = "accessToken=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
             }
             
             var rawData = $safeLs;
@@ -340,25 +325,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             }
         }
         
-        var originalFetch = window.fetch;
-        window.fetch = async function() {
-          var url = typeof arguments[0] === 'string' ? arguments[0] : (arguments[0].url || 'unknown_url');
-          var isMedia = url.includes('.png') || url.includes('.svg') || url.includes('.jpg');
-          if(url.includes('tapsi') && !isMedia) {
-             window.flutter_inappwebview.callHandler('networkLog', '[REQ] ' + url);
-          }
-          try {
-            var response = await originalFetch.apply(this, arguments);
-            if(url.includes('tapsi') && !isMedia) {
-                window.flutter_inappwebview.callHandler('networkLog', '[RES] ' + response.status + ' | ' + response.url);
-            }
-            return response;
-          } catch(e) {
-            window.flutter_inappwebview.callHandler('networkLog', '[ERR] ' + url + ' | ' + e);
-            throw e;
-          }
-        };
-
+        // 🎯 تپسی مارکت کاملاً رها می‌شود تا فرآیند استاندارد را طی کند
       } catch(e) {
         console.error("Injection Engine Error: ", e);
       }
@@ -375,47 +342,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         }
       }, true);
     """;
-  }
-
-  Future<void> _showLogViewer() async {
-    try {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('در حال استخراج لاگ‌ها...', textDirection: TextDirection.rtl)),
-      );
-
-      CookieManager cookieManager = CookieManager.instance();
-      List<Cookie> cabCookies = await cookieManager.getCookies(url: WebUri("https://app.tapsi.cab"));
-      List<Cookie> marketCookies = await cookieManager.getCookies(url: WebUri("https://www.tapsi.markets"));
-      
-      String marketLs = await webViewController?.evaluateJavascript(source: "JSON.stringify(window.localStorage);") ?? "{}";
-      String currentUrl = (await webViewController?.getUrl())?.toString() ?? "unknown";
-
-      StringBuffer sb = StringBuffer();
-      sb.writeln("=== TAPSI DEBUG LOGS ===");
-      sb.writeln("TIME: ${DateTime.now().toIso8601String()}");
-      sb.writeln("CURRENT URL: $currentUrl");
-      sb.writeln("\n--- CAB COOKIES ---");
-      for (var c in cabCookies) { sb.writeln("${c.name} = ${c.value}"); }
-      sb.writeln("\n--- MARKET COOKIES ---");
-      for (var c in marketCookies) { sb.writeln("${c.name} = ${c.value}"); }
-      sb.writeln("\n--- MARKET LOCAL STORAGE ---");
-      sb.writeln(marketLs);
-      sb.writeln("\n--- NETWORK & CONSOLE ---");
-      for (var log in _debugLogs.reversed) { sb.writeln(log); }
-
-      if (!mounted) return;
-      
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => LogViewerScreen(logs: sb.toString()),
-        ),
-      );
-
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطا: $e', textDirection: TextDirection.rtl)));
-    }
   }
 
   @override
@@ -455,91 +381,30 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFF0B0C10),
         body: SafeArea(
-          child: Stack(
-            children: [
-              InAppWebView(
-                initialUrlRequest: URLRequest(url: WebUri("https://app.tapsi.cab/profile/")),
-                initialUserScripts: UnmodifiableListView<UserScript>([injectionScript]),
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  domStorageEnabled: true,
-                  clearCache: false,
-                  thirdPartyCookiesEnabled: true, 
-                  supportMultipleWindows: false,
-                  javaScriptCanOpenWindowsAutomatically: false,
-                  userAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-                ),
-                onWebViewCreated: (controller) {
-                  webViewController = controller;
-                  controller.addJavaScriptHandler(handlerName: 'networkLog', callback: (args) {
-                    if (args.isNotEmpty) _debugLogs.add(args[0].toString());
-                  });
-                },
-                onConsoleMessage: (controller, consoleMessage) {
-                  _debugLogs.add("[CONSOLE] ${consoleMessage.messageLevel}: ${consoleMessage.message}");
-                },
-                onLoadStop: (controller, url) async {
-                  if (url != null && url.host == 'app.tapsi.cab') {
-                    bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
-                    if (!isReloaded) {
-                      await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
-                      controller.reload();
-                    }
-                  }
-                },
-              ),
-              Positioned(
-                bottom: 20,
-                right: 20,
-                child: FloatingActionButton(
-                  backgroundColor: const Color(0xFF5CEBFF),
-                  mini: true,
-                  onPressed: _showLogViewer,
-                  child: const Icon(Icons.bug_report_rounded, color: Colors.black),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ==========================================
-// IN-APP LOG VIEWER SCREEN
-// ==========================================
-class LogViewerScreen extends StatelessWidget {
-  final String logs;
-
-  const LogViewerScreen({Key? key, required this.logs}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1F2833),
-      appBar: AppBar(
-        title: const Text('دیباگر تپسی', style: TextStyle(fontSize: 16)),
-        backgroundColor: const Color(0xFF0B0C10),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.copy_all_rounded, color: Color(0xFF5CEBFF)),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: logs));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('متن لاگ‌ها کپی شد!', textDirection: TextDirection.rtl), backgroundColor: Colors.green),
-              );
+          child: InAppWebView(
+            initialUrlRequest: URLRequest(url: WebUri("https://app.tapsi.cab/profile/")),
+            initialUserScripts: UnmodifiableListView<UserScript>([injectionScript]),
+            initialSettings: InAppWebViewSettings(
+              javaScriptEnabled: true,
+              domStorageEnabled: true,
+              clearCache: false,
+              thirdPartyCookiesEnabled: true, 
+              supportMultipleWindows: false,
+              javaScriptCanOpenWindowsAutomatically: false,
+              userAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+            ),
+            onWebViewCreated: (controller) {
+              webViewController = controller;
             },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: SingleChildScrollView(
-          child: SelectableText(
-            logs,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.white70),
-            textDirection: TextDirection.ltr,
+            onLoadStop: (controller, url) async {
+              if (url != null && url.host == 'app.tapsi.cab') {
+                bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
+                if (!isReloaded) {
+                  await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
+                  controller.reload();
+                }
+              }
+            },
           ),
         ),
       ),
