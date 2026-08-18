@@ -248,8 +248,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   Future<void> _initializeEngine() async {
     CookieManager cookieManager = CookieManager.instance();
     
-    // 🚨 ترفند اصلی اینجاست: دامنه‌های مارکت به طور کامل از لیست هدف حذف شدند!
-    // تا توکن تاکسی وارد مارکت نشود و سشن اصلی آن را خراب نکند.
+    // 🚨 دامنه‌های مارکت حذف شدند تا سشن اختصاصی خودشان را خراب نکنیم
     List<String> targetDomains = [
       ".tapsi.cab", "app.tapsi.cab", "api.tapsi.cab", 
       ".tapsi.ir", "accounts.tapsi.ir", "accounts-api.tapsi.ir"
@@ -293,24 +292,25 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     
     return """
       try {
-        var jwt = "$_extractedJwt";
-        if (jwt) {
-           window.localStorage.setItem('token', jwt);
-           window.localStorage.setItem('accessToken', jwt);
-           
-           // تزریق فقط برای دامنه اصلی تاکسی انجام می‌شود
-           document.cookie = "token=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
-           document.cookie = "accessToken=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
-        }
-        
-        var rawData = $safeLs;
-        if (rawData && rawData !== '{}') {
-           var lsData = JSON.parse(rawData);
-           for (var key in lsData) {
-              var val = typeof lsData[key] === 'string' ? lsData[key] : JSON.stringify(lsData[key]);
-              window.localStorage.setItem(key, val);
-              window.sessionStorage.setItem(key, val);
-           }
+        // 🚨 جلوگیری از تزریق دیتای تاکسی به محیط مارکت!
+        if (window.location.hostname.includes('tapsi.cab') || window.location.hostname.includes('accounts.tapsi.ir')) {
+            var jwt = "$_extractedJwt";
+            if (jwt) {
+               window.localStorage.setItem('token', jwt);
+               window.localStorage.setItem('accessToken', jwt);
+               document.cookie = "token=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
+               document.cookie = "accessToken=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
+            }
+            
+            var rawData = $safeLs;
+            if (rawData && rawData !== '{}') {
+               var lsData = JSON.parse(rawData);
+               for (var key in lsData) {
+                  var val = typeof lsData[key] === 'string' ? lsData[key] : JSON.stringify(lsData[key]);
+                  window.localStorage.setItem(key, val);
+                  window.sessionStorage.setItem(key, val);
+               }
+            }
         }
       } catch(e) {
         console.error("Injection Engine Error: ", e);
@@ -373,7 +373,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               domStorageEnabled: true,
-              clearCache: false, // جلوگیری از پاک شدن کوکی‌های طبیعی مارکت
+              clearCache: false,
               thirdPartyCookiesEnabled: true, 
               supportMultipleWindows: false,
               javaScriptCanOpenWindowsAutomatically: false,
@@ -383,10 +383,13 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               webViewController = controller;
             },
             onLoadStop: (controller, url) async {
-              bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
-              if (!isReloaded) {
-                await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
-                controller.reload();
+              // 🚨 شاهکار کلود: این رفرش لعنتی فقط باید برای دامنه اصلی اتفاق بیفتد!
+              if (url != null && url.host == 'app.tapsi.cab') {
+                bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
+                if (!isReloaded) {
+                  await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
+                  controller.reload();
+                }
               }
             },
           ),
