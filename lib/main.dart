@@ -248,10 +248,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
   Future<void> _initializeEngine() async {
     CookieManager cookieManager = CookieManager.instance();
     
-    // 🚨 دامنه‌های مارکت حذف شدند تا سشن اختصاصی خودشان را خراب نکنیم
+    // 🟢 دامنه‌های مارکت اضافه شدند
     List<String> targetDomains = [
       ".tapsi.cab", "app.tapsi.cab", "api.tapsi.cab", 
-      ".tapsi.ir", "accounts.tapsi.ir", "accounts-api.tapsi.ir"
+      ".tapsi.ir", "accounts.tapsi.ir", "accounts-api.tapsi.ir",
+      ".tapsi.markets", "www.tapsi.markets"
     ];
 
     if (widget.cookies.isNotEmpty && widget.cookies != 'empty') {
@@ -292,14 +293,27 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     
     return """
       try {
-        // 🚨 جلوگیری از تزریق دیتای تاکسی به محیط مارکت!
-        if (window.location.hostname.includes('tapsi.cab') || window.location.hostname.includes('accounts.tapsi.ir')) {
+        var host = window.location.hostname;
+        // 🟢 اجازه تزریق به مارکت به صورت داینامیک داده شد
+        if (host.includes('tapsi.cab') || host.includes('accounts.tapsi.ir') || host.includes('tapsi.markets')) {
             var jwt = "$_extractedJwt";
+            
+            // استخراج دامنه ریشه (root domain) برای ست کردن صحیح کوکی‌ها
+            var rootDomain = host;
+            var parts = host.split('.');
+            if (parts.length > 2) {
+                rootDomain = '.' + parts.slice(-2).join('.');
+            } else {
+                rootDomain = '.' + host;
+            }
+
             if (jwt) {
                window.localStorage.setItem('token', jwt);
                window.localStorage.setItem('accessToken', jwt);
-               document.cookie = "token=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
-               document.cookie = "accessToken=" + jwt + "; path=/; domain=.tapsi.ir; secure; samesite=none";
+               
+               // 🟢 ست کردن کوکی‌ها بر اساس دامنه فعلی
+               document.cookie = "token=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
+               document.cookie = "accessToken=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
             }
             
             var rawData = $safeLs;
@@ -383,7 +397,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               webViewController = controller;
             },
             onLoadStop: (controller, url) async {
-              // 🚨 شاهکار کلود: این رفرش لعنتی فقط باید برای دامنه اصلی اتفاق بیفتد!
               if (url != null && url.host == 'app.tapsi.cab') {
                 bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
                 if (!isReloaded) {
