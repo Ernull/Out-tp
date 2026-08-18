@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter/material.dart';
@@ -226,22 +227,34 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
 
   void _extractToken() {
     try {
-      RegExp exp1 = RegExp(r'"accessToken"\s*:\s*"([^"]+)"');
-      var match1 = exp1.firstMatch(widget.localStorageStr);
-      if (match1 != null) {
-        _extractedJwt = match1.group(1)!;
+      _debugLogs.add("[DART] Starting token extraction...");
+      
+      // 🚨 اولویت اول: استخراج از کوکی (مشکل اصلی در لاگ شما اینجا بود)
+      RegExp cookieExp = RegExp(r'(?:accessToken|token)=(eyJ[a-zA-Z0-9-_.]+)');
+      var cookieMatch = cookieExp.firstMatch(widget.cookies);
+      if (cookieMatch != null) {
+        _extractedJwt = cookieMatch.group(1)!;
+        _debugLogs.add("[DART] Token found in cookies.");
         return;
       }
-      RegExp exp2 = RegExp(r'"token"\s*:\s*"([^"]+)"');
-      var match2 = exp2.firstMatch(widget.localStorageStr);
-      if (match2 != null) {
-        _extractedJwt = match2.group(1)!;
+
+      // اولویت دوم: استخراج از لوکال استوریج
+      RegExp lsExp = RegExp(r'"(?:accessToken|token)"\s*:\s*"(eyJ[a-zA-Z0-9-_.]+)"');
+      var lsMatch = lsExp.firstMatch(widget.localStorageStr);
+      if (lsMatch != null) {
+        _extractedJwt = lsMatch.group(1)!;
+        _debugLogs.add("[DART] Token found in localStorage.");
         return;
       }
-      RegExp exp3 = RegExp(r'"(eyJ[a-zA-Z0-9-_.]+)"');
-      var match3 = exp3.firstMatch(widget.localStorageStr);
-      if (match3 != null) {
-        _extractedJwt = match3.group(1)!;
+
+      // اولویت سوم: جستجوی آزاد در کل دیتای دریافتی
+      RegExp fallbackExp = RegExp(r'(eyJ[a-zA-Z0-9-_.]+)');
+      var fallbackMatch = fallbackExp.firstMatch(widget.cookies + widget.localStorageStr);
+      if (fallbackMatch != null) {
+        _extractedJwt = fallbackMatch.group(1)!;
+        _debugLogs.add("[DART] Token found via fallback regex.");
+      } else {
+        _debugLogs.add("[DART] CRITICAL ERROR: Could not find any JWT!");
       }
     } catch (e) {
       _debugLogs.add("[DART] Token extraction failed: $e");
@@ -264,7 +277,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         if (parts.length >= 2) {
           String name = parts[0].trim();
           String value = parts.sublist(1).join('=').trim();
-          
           for (String d in targetDomains) {
             String urlStr = "https://" + (d.startsWith('.') ? d.substring(1) : d);
             await cookieManager.setCookie(
@@ -317,6 +329,18 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                window.localStorage.setItem('accessToken', jwt);
                document.cookie = "token=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
                document.cookie = "accessToken=" + jwt + "; path=/; domain=" + rootDomain + "; secure; samesite=none";
+               
+               // 🚨 فریب دادن تپسی مارکت با ساخت دستیِ استیت Redux
+               if (host.includes('tapsi.markets')) {
+                  window.localStorage.setItem('tokenMS', jwt);
+                  var fakePersist = JSON.stringify({
+                      user: JSON.stringify({
+                          user: { token: jwt }
+                      }),
+                      _persist: JSON.stringify({ version: -1, rehydrated: true })
+                  });
+                  window.localStorage.setItem('persist:root', fakePersist);
+               }
             }
             
             var rawData = $safeLs;
@@ -324,8 +348,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                var lsData = JSON.parse(rawData);
                for (var key in lsData) {
                   var val = typeof lsData[key] === 'string' ? lsData[key] : JSON.stringify(lsData[key]);
-                  window.localStorage.setItem(key, val);
-                  window.sessionStorage.setItem(key, val);
+                  // برای مارکت کلیدهای سیستمی را دوباره رونویسی نکنیم تا فریب خراب نشود
+                  if (!host.includes('tapsi.markets') || (key !== 'persist:root' && key !== 'tokenMS')) {
+                      window.localStorage.setItem(key, val);
+                      window.sessionStorage.setItem(key, val);
+                  }
                }
             }
         }
@@ -391,7 +418,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
       sb.writeln("\n--- MARKET LOCAL STORAGE ---");
       sb.writeln(marketLs);
       sb.writeln("\n--- NETWORK & CONSOLE ---");
-      for (var log in _debugLogs.reversed) { sb.writeln(log); }
+      for (var log in _debugLogs) { sb.writeln(log); }
 
       if (!mounted) return;
       
@@ -468,11 +495,19 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
                   _debugLogs.add("[CONSOLE] ${consoleMessage.messageLevel}: ${consoleMessage.message}");
                 },
                 onLoadStop: (controller, url) async {
-                  if (url != null && url.host == 'app.tapsi.cab') {
-                    bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
-                    if (!isReloaded) {
-                      await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
-                      controller.reload();
+                  if (url != null) {
+                    // 🚨 تله ریدایرکت: اگر مارکت خواست ما را به اجبار بفرستد صفحه لاگین، ما آن را به فروشگاه‌ها برمی‌گردانیم!
+                    if (url.host == 'accounts.tapsi.ir' && url.path.contains('login') && url.query.contains('okala')) {
+                        _debugLogs.add("[NAV] Bouncing back from accounts to market");
+                        await controller.loadUrl(urlRequest: URLRequest(url: WebUri("https://www.tapsi.markets/v2/stores")));
+                    }
+                    
+                    if (url.host == 'app.tapsi.cab') {
+                      bool? isReloaded = await controller.evaluateJavascript(source: "window.sessionStorage.getItem('core_init');") == 'true';
+                      if (!isReloaded) {
+                        await controller.evaluateJavascript(source: "window.sessionStorage.setItem('core_init', 'true');");
+                        controller.reload();
+                      }
                     }
                   }
                 },
