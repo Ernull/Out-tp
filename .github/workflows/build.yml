@@ -29,7 +29,7 @@ jobs:
 
       - name: Create Fresh Project & Build
         run: |
-          # ۱. ساخت پروژه جدید با شناسه پکیج کاملاً اختصاصی (برای نصب به عنوان یک برنامه جدید)
+          # ۱. ساخت پروژه جدید با شناسه اختصاصی
           flutter create --org com.erfan.tapsilink clean_tapsi_app
           
           # ۲. کپی کدهای شما و عکس آیکون
@@ -45,16 +45,16 @@ jobs:
           flutter pub add http shared_preferences flutter_inappwebview dio
           flutter pub add --dev flutter_launcher_icons rename_app
           
-          # ۵. 🪄 تغییر اسم برنامه به Tapsi link 🪄
+          # ۵. تغییر اسم برنامه به Tapsi link
           flutter pub run rename_app:main all="Tapsi link"
           
-          # ۶. 🪄 ساخت اتوماتیک آیکون جدید 🪄
+          # ۶. 🪄 ساخت اتوماتیک آیکون جدید (ارور فاصله‌گذاری برطرف شد) 🪄
           if [ -f "icon.png" ]; then
-            echo "
-            flutter_launcher_icons:
-              android: \"launcher_icon\"
-              image_path: \"icon.png\"
-              min_sdk_android: 21" >> pubspec.yaml
+            echo "" >> pubspec.yaml
+            echo "flutter_launcher_icons:" >> pubspec.yaml
+            echo "  android: \"launcher_icon\"" >> pubspec.yaml
+            echo "  image_path: \"icon.png\"" >> pubspec.yaml
+            echo "  min_sdk_android: 21" >> pubspec.yaml
             flutter pub run flutter_launcher_icons
           fi
           
