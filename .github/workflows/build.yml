@@ -32,18 +32,18 @@ jobs:
           # ۱. ساخت پروژه جدید با شناسه اختصاصی
           flutter create --org com.erfan.tapsilink clean_tapsi_app
           
-          # ۲. کپی کدهای شما (main.dart و pubspec.yaml) و عکس آیکون
+          # ۲. کپی کدهای شما
           cp lib/main.dart clean_tapsi_app/lib/main.dart
           cp pubspec.yaml clean_tapsi_app/pubspec.yaml
           if [ -f "icon.png" ]; then cp icon.png clean_tapsi_app/icon.png; fi
           
           cd clean_tapsi_app
           
-          # ۳. تزریق مجوز اینترنت
+          # ۳. 🪄 تزریق مجوز اینترنت و ارتقای minSdkVersion به 21 (نیاز قطعی وب‌ویو) 🪄
           sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
           
-          # ۴. دانلود پکیج‌ها و ابزارهای مورد نیاز
-          flutter pub add rename_app
+          # ۴. دانلود پکیج‌ها
           flutter pub get
           
           # ۵. تغییر اسم برنامه به Tapsi link
