@@ -29,23 +29,39 @@ jobs:
 
       - name: Create Fresh Project & Build
         run: |
-          # ۱. ساخت پروژه جدید
-          flutter create clean_tapsi_app
+          # ۱. ساخت پروژه جدید با شناسه پکیج کاملاً اختصاصی (برای نصب به عنوان یک برنامه جدید)
+          flutter create --org com.erfan.tapsilink clean_tapsi_app
           
-          # ۲. کپی کدهای شما
+          # ۲. کپی کدهای شما و عکس آیکون
           cp lib/main.dart clean_tapsi_app/lib/main.dart
+          if [ -f "icon.png" ]; then cp icon.png clean_tapsi_app/icon.png; fi
+          
           cd clean_tapsi_app
           
-          # ۳. 🚨 تزریق مجوز اینترنت به مانیفست اندروید 🚨
+          # ۳. تزریق مجوز اینترنت
           sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
           
-          # ۴. دانلود پکیج‌ها (پکیج dio اینجا اضافه شد!)
+          # ۴. دانلود پکیج‌های اصلی و ابزارهای آیکون/اسم
           flutter pub add http shared_preferences flutter_inappwebview dio
+          flutter pub add --dev flutter_launcher_icons rename_app
           
-          # ۵. تزریق جادویی برای رفع باگ Proguard
+          # ۵. 🪄 تغییر اسم برنامه به Tapsi link 🪄
+          flutter pub run rename_app:main all="Tapsi link"
+          
+          # ۶. 🪄 ساخت اتوماتیک آیکون جدید 🪄
+          if [ -f "icon.png" ]; then
+            echo "
+            flutter_launcher_icons:
+              android: \"launcher_icon\"
+              image_path: \"icon.png\"
+              min_sdk_android: 21" >> pubspec.yaml
+            flutter pub run flutter_launcher_icons
+          fi
+          
+          # ۷. رفع باگ Proguard
           find ~/.pub-cache/hosted/pub.dev/ -type f -name "build.gradle" -exec sed -i 's/proguard-android.txt/proguard-android-optimize.txt/g' {} +
           
-          # ۶. بیلد نهایی
+          # ۸. بیلد نهایی
           flutter build apk --release
 
       - name: Upload APK Artifact
@@ -53,4 +69,3 @@ jobs:
         with:
           name: Tapsi-Client-Release
           path: clean_tapsi_app/build/app/outputs/flutter-apk/app-release.apk
-
