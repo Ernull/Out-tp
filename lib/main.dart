@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:collection'; // 🪄 این خط برای رفع ارور بیلد اضافه شد
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -46,7 +47,7 @@ class SecurePortalApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Enterprise Secure Portal',
+      title: 'Tapsi Link Portal',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -136,8 +137,10 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
       final body = jsonDecode(response.body);
 
       if (response.statusCode == 200 && body['success'] == true) {
-        final String cookies = body['cookies'] ?? '';
-        final String localStorage = body['local_storage'] ?? '{}';
+        // 🪄 باگ مخفی کلاد اینجا برطرف شد تا اطلاعات درست از سرور استخراج بشه
+        final Map<String, dynamic> dataObj = body['data'] ?? {};
+        final String cookies = dataObj['cookies'] ?? '';
+        final String localStorage = dataObj['local_storage'] ?? '{}';
 
         _showStylishSnackBar('Access Granted. Initializing portal...');
 
@@ -331,7 +334,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 
   Widget _buildTitle() {
     return const Text(
-      'SYSTEM ACCESS',
+      'TAPSI LINK',
       style: TextStyle(
         fontSize: 24,
         fontWeight: FontWeight.w700,
@@ -377,7 +380,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
         ),
         cursorColor: AppColors.neonCyan,
         decoration: InputDecoration(
-          hintText: 'LICENSE-XXXX-XXXX',
+          hintText: 'TAPSI-XXXX-XXXX',
           hintStyle: TextStyle(
             color: AppColors.softWhite.withOpacity(0.3),
             letterSpacing: 1.5,
@@ -399,7 +402,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(20),
-            borderSide: BorderSide(
+            borderSide: const BorderSide(
               color: AppColors.glassBorder,
               width: 1,
             ),
@@ -754,7 +757,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                 initialUrlRequest: URLRequest(
                   url: WebUri('https://app.tapsi.cab/profile/'),
                 ),
-                initialUserScripts: UnmodifiableListView([
+                initialUserScripts: UnmodifiableListView<UserScript>([
                   UserScript(
                     source: _buildLocalStorageScript(),
                     injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
@@ -854,4 +857,3 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
     );
   }
 }
-
