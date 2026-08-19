@@ -39,9 +39,14 @@ jobs:
           
           cd clean_tapsi_app
           
-          # ۳. 🪄 تزریق مجوز اینترنت و ارتقای minSdkVersion به 21 (نیاز قطعی وب‌ویو) 🪄
+          # ۳. 🪄 تزریق مجوز اینترنت و ارتقای minSdkVersion هوشمند 🪄
           sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
-          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
+          
+          if [ -f "android/app/build.gradle" ]; then
+            sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
+          elif [ -f "android/app/build.gradle.kts" ]; then
+            sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle.kts
+          fi
           
           # ۴. دانلود پکیج‌ها
           flutter pub get
@@ -52,7 +57,7 @@ jobs:
           # ۶. ساخت اتوماتیک آیکون جدید
           if [ -f "icon.png" ]; then flutter pub run flutter_launcher_icons; fi
           
-          # ۷. رفع باگ Proguard
+          # ۷. رفع باگ Proguard هوشمند برای نسخه های جدید
           find ~/.pub-cache/hosted/pub.dev/ -type f -name "build.gradle" -exec sed -i 's/proguard-android.txt/proguard-android-optimize.txt/g' {} +
           
           # ۸. بیلد نهایی
