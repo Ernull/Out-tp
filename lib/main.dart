@@ -243,7 +243,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         _extractedJwt = fallbackMatch.group(1)!;
       }
     } catch (e) {
-      debugPrint("Token extraction failed: $e");
+      debugPrint("Token extraction failed.");
     }
   }
 
@@ -251,8 +251,11 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
     CookieManager cookieManager = CookieManager.instance();
     await cookieManager.deleteAllCookies();
 
-    // 🎯 محدود کردن کوکی‌ها فقط به دامنه اصلی تاکسی
-    List<String> baseDomains = [".tapsi.cab", "app.tapsi.cab"];
+    // 🎯 دامنه‌های ریشه که نیاز به کوکی‌های احراز هویت دارند
+    List<String> baseDomains = [
+      ".tapsi.cab", 
+      ".tapsi.ir"
+    ];
 
     if (widget.cookies.isNotEmpty && widget.cookies != 'empty') {
       List<String> cookiePairs = widget.cookies.split(';');
@@ -295,8 +298,9 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         var host = window.location.hostname;
         var jwt = "$_extractedJwt";
         
-        // 🎯 استراتژی مرورگر: کد تزریق ما فقط و فقط در دامنه app.tapsi.cab (تاکسی) اجرا می‌شود!
-        // بقیه سایت‌ها (مثل مارکت، لاگین و ...) به حال خود رها می‌شوند تا مثل یک مرورگر عادی کار کنند
+        // 🎯 استراتژی مرورگر: کد تزریق ما فقط در دامنه app.tapsi.cab (تاکسی) اجرا می‌شود!
+        // بقیه سایت‌ها (مثل مارکت، سیستم لاگین یکپارچه و ...) به حال خود رها می‌شوند 
+        // تا با کمک کوکی‌هایی که در فلاتر تنظیم کردیم کارشان را پیش ببرند.
         if (host === 'app.tapsi.cab') {
             if (jwt) {
                window.localStorage.setItem('token', jwt);
@@ -318,7 +322,7 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
         console.error("Injection Engine Error: ", e);
       }
       
-      // جلوگیری از باز شدن لینک‌ها در مرورگر خارجی گوشی
+      // جلوگیری از باز شدن تب جدید در مرورگر خارجی گوشی
       window.open = function(url, target, features) {
         window.location.href = url;
         return null;
@@ -377,7 +381,6 @@ class _CoreEngineScreenState extends State<CoreEngineScreen> {
               javaScriptEnabled: true,
               domStorageEnabled: true,
               clearCache: false,
-              // این گزینه اجازه می‌دهد کوکی‌ها و استوریج مثل کروم عمل کنند
               thirdPartyCookiesEnabled: true, 
               supportMultipleWindows: false,
               javaScriptCanOpenWindowsAutomatically: false,
