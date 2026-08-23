@@ -7,9 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // CONSTANTS & THEME
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 
 class AppColors {
   static const Color deepBlack = Color(0xFF0B0C10);
@@ -24,9 +24,9 @@ class AppColors {
   static const Color glassBorder = Color(0x33FFFFFF);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // MAIN ENTRY POINT
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,9 +65,9 @@ class SecurePortalApp extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // SCREEN 1: SECURE AUTHENTICATION
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 
 class AuthenticationScreen extends StatefulWidget {
   const AuthenticationScreen({super.key});
@@ -478,9 +478,9 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // SCREEN 2: PORTAL WEB ENGINE
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 
 class PortalWebEngineScreen extends StatefulWidget {
   final String cookies;
@@ -749,6 +749,43 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.deepBlack,
+      appBar: _isReady
+          ? AppBar(
+              backgroundColor: AppColors.darkGray.withOpacity(0.8),
+              elevation: 0,
+              actions: [
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.neonCyan.withOpacity(0.2),
+                        blurRadius: 12,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    icon: const Icon(
+                      Icons.logout_rounded,
+                      color: AppColors.neonCyan,
+                      size: 22,
+                    ),
+                    onPressed: _resetSession,
+                    tooltip: 'Reset Session',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.deepBlack.withOpacity(0.8),
+                      side: BorderSide(
+                        color: AppColors.neonCyan.withOpacity(0.4),
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : null,
       body: SafeArea(
         child: Stack(
           children: [
@@ -825,35 +862,6 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
           ],
         ),
       ),
-      floatingActionButton: _isReady
-          ? Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.neonCyan.withOpacity(0.35),
-                    blurRadius: 18,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: FloatingActionButton(
-                onPressed: _resetSession,
-                backgroundColor: AppColors.darkGray.withOpacity(0.9),
-                shape: CircleBorder(
-                  side: BorderSide(
-                    color: AppColors.neonCyan.withOpacity(0.6),
-                    width: 1.5,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.logout_rounded,
-                  color: AppColors.neonCyan,
-                  size: 24,
-                ),
-              ),
-            )
-          : null,
     );
   }
 }
