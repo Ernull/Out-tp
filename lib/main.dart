@@ -126,7 +126,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 
     try {
       final url = Uri.parse(
-        'https://testtok-production.up.railway.app/api/tapsi/get-license/$key',
+        'https://testtok-production1.up.railway.app/api/tapsi/get-license/$key',
       );
       final response = await http.get(url).timeout(
         const Duration(seconds: 20),
