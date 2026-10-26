@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - master
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
@@ -32,15 +32,20 @@ jobs:
           # ۱. ساخت پروژه جدید با شناسه اختصاصی
           flutter create --org com.erfan.tapsilink clean_tapsi_app
           
-          # ۲. کپی کدهای شما
-          cp lib/main.dart clean_tapsi_app/lib/main.dart
+          # ۲. کپی کدهای پروژه
+          if [ -f "lib/main.dart" ]; then
+            cp lib/main.dart clean_tapsi_app/lib/main.dart
+          elif [ -f "main.dart" ]; then
+            cp main.dart clean_tapsi_app/lib/main.dart
+          fi
           cp pubspec.yaml clean_tapsi_app/pubspec.yaml
           if [ -f "icon.png" ]; then cp icon.png clean_tapsi_app/icon.png; fi
           
           cd clean_tapsi_app
           
-          # ۳. 🪄 تزریق مجوز اینترنت و ارتقای minSdkVersion هوشمند 🪄
-          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+          # ۳. تزریق مجوزهای اینترنت، موقعیت مکانی (GPS برای نقشه تپسی/اکالا) و پشتیبانی از ترافیک وب
+          sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>' android/app/src/main/AndroidManifest.xml
+          sed -i 's/<application/<application android:usesCleartextTraffic="true" android:hardwareAccelerated="true"/g' android/app/src/main/AndroidManifest.xml
           
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
@@ -57,7 +62,7 @@ jobs:
           # ۶. ساخت اتوماتیک آیکون جدید
           if [ -f "icon.png" ]; then flutter pub run flutter_launcher_icons; fi
           
-          # ۷. رفع باگ Proguard هوشمند برای نسخه های جدید
+          # ۷. رفع باگ Proguard هوشمند برای نسخه‌های جدید
           find ~/.pub-cache/hosted/pub.dev/ -type f -name "build.gradle" -exec sed -i 's/proguard-android.txt/proguard-android-optimize.txt/g' {} +
           
           # ۸. بیلد نهایی
