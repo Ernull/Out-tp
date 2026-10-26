@@ -1,9 +1,9 @@
 name: enterprise_secure_portal
-description: Enterprise Secure Portal - Authorized Session Restoration
+description: Enterprise Secure Portal - Authorized Session Restoration (Pro Edition)
 
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
