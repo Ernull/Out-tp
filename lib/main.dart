@@ -4,8 +4,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -30,39 +28,35 @@ class AppColors {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// MODELS & LOCAL ACCOUNT STORAGE (NO EXTERNAL PLUGIN NEEDED)
+// SAVED LICENSES STORE (FOR QUICK SWITCHING BETWEEN LICENSES)
 // ────────────────────────────────────────────────────────────────────
 
-class SavedAccount {
-  final String keyOrLabel;
-  final String rawInput;
+class SavedLicense {
+  final String licenseKey;
   final DateTime lastUsed;
 
-  SavedAccount({
-    required this.keyOrLabel,
-    required this.rawInput,
+  SavedLicense({
+    required this.licenseKey,
     required this.lastUsed,
   });
 
   Map<String, dynamic> toJson() => {
-        'keyOrLabel': keyOrLabel,
-        'rawInput': rawInput,
+        'licenseKey': licenseKey,
         'lastUsed': lastUsed.toIso8601String(),
       };
 
-  factory SavedAccount.fromJson(Map<String, dynamic> json) => SavedAccount(
-        keyOrLabel: json['keyOrLabel']?.toString() ?? 'Unknown',
-        rawInput: json['rawInput']?.toString() ?? '',
+  factory SavedLicense.fromJson(Map<String, dynamic> json) => SavedLicense(
+        licenseKey: json['licenseKey']?.toString() ?? '',
         lastUsed: DateTime.tryParse(json['lastUsed']?.toString() ?? '') ??
             DateTime.now(),
       );
 }
 
-class AccountHistoryStore {
+class LicenseHistoryStore {
   static File get _storeFile =>
-      File('${Directory.systemTemp.path}/tapsi_link_accounts_v2.json');
+      File('${Directory.systemTemp.path}/tapsi_saved_licenses.json');
 
-  static Future<List<SavedAccount>> loadAccounts() async {
+  static Future<List<SavedLicense>> loadLicenses() async {
     try {
       final file = _storeFile;
       if (!await file.exists()) return [];
@@ -70,26 +64,21 @@ class AccountHistoryStore {
       final List<dynamic> decoded = jsonDecode(content);
       return decoded
           .whereType<Map<String, dynamic>>()
-          .map(SavedAccount.fromJson)
+          .map(SavedLicense.fromJson)
+          .where((item) => item.licenseKey.isNotEmpty)
           .toList();
     } catch (_) {
       return [];
     }
   }
 
-  static Future<void> saveAccount(String label, String rawInput) async {
+  static Future<void> saveLicense(String key) async {
     try {
-      final list = await loadAccounts();
-      list.removeWhere(
-        (item) => item.rawInput == rawInput || item.keyOrLabel == label,
-      );
+      final list = await loadLicenses();
+      list.removeWhere((item) => item.licenseKey == key);
       list.insert(
         0,
-        SavedAccount(
-          keyOrLabel: label,
-          rawInput: rawInput,
-          lastUsed: DateTime.now(),
-        ),
+        SavedLicense(licenseKey: key, lastUsed: DateTime.now()),
       );
       if (list.length > 10) {
         list.removeRange(10, list.length);
@@ -100,10 +89,10 @@ class AccountHistoryStore {
     } catch (_) {}
   }
 
-  static Future<void> removeAccount(String rawInput) async {
+  static Future<void> removeLicense(String key) async {
     try {
-      final list = await loadAccounts();
-      list.removeWhere((item) => item.rawInput == rawInput);
+      final list = await loadLicenses();
+      list.removeWhere((item) => item.licenseKey == key);
       await _storeFile.writeAsString(
         jsonEncode(list.map((e) => e.toJson()).toList()),
       );
@@ -120,28 +109,22 @@ class AccountHistoryStore {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// DEEP SESSION SANITIZER (FIXES ACCOUNT CONFLICT ACROSS ALL DOMAINS)
+// DEEP SESSION SANITIZER (ELIMINATES ACCOUNT CONFLICT IN TAPSI & MARKET)
 // ────────────────────────────────────────────────────────────────────
 
 class SessionSanitizer {
-  static final List<String> allDomains = [
-    'tapsi.cab',
+  static const List<String> targetDomains = [
     '.tapsi.cab',
     'app.tapsi.cab',
-    'supermarket.tapsi.cab',
-    'tapsi.ir',
+    'tapsi.cab',
     '.tapsi.ir',
-    'tapsi.markets',
+    'tapsi.ir',
     '.tapsi.markets',
-    'tapsi.shop',
+    'tapsi.markets',
     '.tapsi.shop',
-    'okala.com',
-    '.okala.com',
-    'www.okala.com',
-    'api.okala.com',
+    'tapsi.shop',
   ];
 
-  /// Completely wipes Cookies, LocalStorage, SessionStorage, IndexedDB, and WebView Cache
   static Future<void> deepCleanAllWebData([
     InAppWebViewController? controller,
   ]) async {
@@ -149,7 +132,7 @@ class SessionSanitizer {
       final cookieManager = CookieManager.instance();
       await cookieManager.deleteAllCookies();
 
-      for (final domain in allDomains) {
+      for (final domain in targetDomains) {
         final cleanHost = domain.startsWith('.') ? domain.substring(1) : domain;
         try {
           await cookieManager.deleteCookies(
@@ -162,7 +145,7 @@ class SessionSanitizer {
     } catch (_) {}
 
     try {
-      // Wipes LocalStorage, IndexedDB, WebSQL for ALL origins (fixes Tapsi vs Supermarket conflict)
+      // Wipes LocalStorage, IndexedDB, WebSQL across all origins (including tapsi.markets)
       await WebStorageManager.instance().deleteAllData();
     } catch (_) {}
 
@@ -188,14 +171,9 @@ class SessionSanitizer {
             try {
               if ('caches' in window) {
                 caches.keys().then(function(names) {
-                  for (let name of names) caches.delete(name);
-                });
-              }
-            } catch(e) {}
-            try {
-              if (navigator.serviceWorker) {
-                navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                  for (let registration of registrations) registration.unregister();
+                  for (var i = 0; i < names.length; i++) {
+                    caches.delete(names[i]);
+                  }
                 });
               }
             } catch(e) {}
@@ -230,7 +208,7 @@ class SecurePortalApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tapsi Link Pro',
+      title: 'Tapsi Link',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -249,7 +227,7 @@ class SecurePortalApp extends StatelessWidget {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// SCREEN 1: SMART MULTI-FORMAT AUTHENTICATION
+// SCREEN 1: LICENSE AUTHENTICATION (TAPSI ONLY)
 // ────────────────────────────────────────────────────────────────────
 
 class AuthenticationScreen extends StatefulWidget {
@@ -265,8 +243,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
   final FocusNode _focusNode = FocusNode();
   bool _isLoading = false;
   bool _isFocused = false;
-  String _selectedStartTarget = 'tapsi'; // 'tapsi', 'supermarket', 'okala'
-  List<SavedAccount> _savedAccounts = [];
+  List<SavedLicense> _savedLicenses = [];
 
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
@@ -283,7 +260,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
       parent: _animController,
       curve: Curves.easeOut,
     );
-    _scaleAnim = Tween<double>(begin: 0.90, end: 1.0).animate(
+    _scaleAnim = Tween<double>(begin: 0.88, end: 1.0).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeOutBack),
     );
     _animController.forward();
@@ -292,13 +269,13 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
       if (mounted) setState(() => _isFocused = _focusNode.hasFocus);
     });
 
-    _loadSavedAccounts();
+    _loadSavedLicenses();
   }
 
-  Future<void> _loadSavedAccounts() async {
-    final accounts = await AccountHistoryStore.loadAccounts();
+  Future<void> _loadSavedLicenses() async {
+    final list = await LicenseHistoryStore.loadLicenses();
     if (mounted) {
-      setState(() => _savedAccounts = accounts);
+      setState(() => _savedLicenses = list);
     }
   }
 
@@ -314,276 +291,106 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text?.trim() ?? '';
     if (text.isNotEmpty) {
-      setState(() {
-        _licenseController.text = text;
-      });
-      _showStylishSnackBar('از کلیپ‌بورد جایگذاری شد.');
+      setState(() => _licenseController.text = text);
     } else {
-      _showStylishSnackBar('کلیپ‌بورد خالی است.', isError: true);
+      _showStylishSnackBar('Clipboard is empty.', isError: true);
     }
   }
 
-  /// Normalizes any server or raw JSON structure into {cookies, localStorage, directUrl}
-  Map<String, String> _extractSessionPayload(dynamic decoded) {
-    String cookies = '';
-    Map<String, dynamic> localStorageMap = {};
-    String directUrl = '';
+  Future<void> _authenticate([String? overrideKey]) async {
+    final rawKey = (overrideKey ?? _licenseController.text)
+        .trim()
+        .replaceAll(RegExp(r'\s+'), '');
 
-    if (decoded is Map) {
-      final dynamic dataNode =
-          decoded['data'] ?? decoded['clientSideData'] ?? decoded;
-
-      if (dataNode is Map) {
-        // 1. Extract Cookies
-        final rawCookies =
-            dataNode['cookies'] ?? decoded['cookies'] ?? dataNode['cookie'];
-        if (rawCookies is String) {
-          cookies = rawCookies;
-        } else if (rawCookies is Map) {
-          cookies = rawCookies.entries
-              .map((e) => '${e.key}=${e.value}')
-              .join('; ');
-        } else if (rawCookies is List) {
-          cookies = rawCookies.map((e) => e.toString()).join('; ');
-        }
-
-        // 2. Extract LocalStorage
-        final rawLs = dataNode['local_storage'] ??
-            dataNode['localStorage'] ??
-            dataNode['metadata'] ??
-            decoded['local_storage'] ??
-            decoded['localStorage'];
-
-        if (rawLs is String && rawLs.trim().isNotEmpty) {
-          try {
-            final parsedLs = jsonDecode(rawLs);
-            if (parsedLs is Map) {
-              parsedLs.forEach((k, v) => localStorageMap[k.toString()] = v);
-            }
-          } catch (_) {
-            localStorageMap['raw_session'] = rawLs;
-          }
-        } else if (rawLs is Map) {
-          rawLs.forEach((k, v) => localStorageMap[k.toString()] = v);
-        }
-
-        // 3. Extract direct redirect URL if provided
-        final rawUrl = dataNode['url'] ??
-            dataNode['redirect_url'] ??
-            decoded['url'] ??
-            decoded['redirect_url'];
-        if (rawUrl is String && rawUrl.startsWith('http')) {
-          directUrl = rawUrl;
-        }
-      }
-    }
-
-    // Also synchronize accessToken / refreshToken between cookies and localStorage
-    // so both Tapsi and Supermarket/Okala recognize the exact same user account!
-    final tokenFromCookie = _findTokenInCookies(cookies);
-    if (tokenFromCookie != null && tokenFromCookie.isNotEmpty) {
-      localStorageMap.putIfAbsent('accessToken', () => tokenFromCookie);
-      localStorageMap.putIfAbsent('token', () => tokenFromCookie);
-    } else {
-      // Check if token exists in localStorage but missing in cookies
-      final lsToken = (localStorageMap['accessToken'] ??
-              localStorageMap['token'] ??
-              localStorageMap['access_token'])
-          ?.toString();
-      if (lsToken != null &&
-          lsToken.isNotEmpty &&
-          !cookies.contains('accessToken=')) {
-        cookies = cookies.isEmpty
-            ? 'accessToken=$lsToken'
-            : '$cookies; accessToken=$lsToken';
-      }
-    }
-
-    return {
-      'cookies': cookies,
-      'localStorage': jsonEncode(localStorageMap),
-      'directUrl': directUrl,
-    };
-  }
-
-  String? _findTokenInCookies(String cookies) {
-    for (final part in cookies.split(';')) {
-      final trimmed = part.trim();
-      final idx = trimmed.indexOf('=');
-      if (idx > 0) {
-        final k = trimmed.substring(0, idx).trim();
-        final v = trimmed.substring(idx + 1).trim();
-        if ((k == 'accessToken' || k == 'token' || k == 'access_token') &&
-            v.isNotEmpty) {
-          return v;
-        }
-      }
-    }
-    return null;
-  }
-
-  String _resolveInitialUrl(String directUrl) {
-    if (directUrl.isNotEmpty) return directUrl;
-    switch (_selectedStartTarget) {
-      case 'supermarket':
-        return 'https://app.tapsi.cab/';
-      case 'okala':
-        return 'https://www.okala.com/';
-      case 'tapsi':
-      default:
-        return 'https://app.tapsi.cab/profile/';
-    }
-  }
-
-  Future<void> _authenticate([String? overrideInput]) async {
-    final rawInput = (overrideInput ?? _licenseController.text).trim();
-    if (rawInput.isEmpty) {
-      _showStylishSnackBar(
-        'لطفاً کلید لایسنس، لینک یا JSON نشست را وارد کنید.',
-        isError: true,
-      );
+    if (rawKey.isEmpty) {
+      _showStylishSnackBar('Please enter a valid License Key.', isError: true);
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // Step 1: Deep clean ALL old WebView data first so previous accounts never leak
+      // 1. Deep clean all previous WebView data before logging in with the license
       await SessionSanitizer.deepCleanAllWebData();
 
-      String cookies = '';
-      String localStorage = '{}';
-      String directUrl = '';
-      String displayLabel = rawInput;
+      final url = Uri.parse(
+        'https://testtok-production1.up.railway.app/api/tapsi/get-license/${Uri.encodeComponent(rawKey)}',
+      );
+      final response = await http.get(url).timeout(
+        const Duration(seconds: 20),
+      );
 
-      // Case A: User pasted a direct URL (e.g. https://app.tapsi.cab/?&code=... or railway link)
-      if (rawInput.startsWith('http://') || rawInput.startsWith('https://')) {
-        if (rawInput.contains('/api/tapsi/get-license/') ||
-            rawInput.contains('.up.railway.app/acc/')) {
-          final resp = await http
-              .get(Uri.parse(rawInput))
-              .timeout(const Duration(seconds: 20));
-          if (resp.statusCode == 200 && resp.body.trim().startsWith('{')) {
-            final decoded = jsonDecode(resp.body);
-            final extracted = _extractSessionPayload(decoded);
-            cookies = extracted['cookies'] ?? '';
-            localStorage = extracted['localStorage'] ?? '{}';
-            directUrl = extracted['directUrl'] ?? '';
-          } else {
-            directUrl = rawInput;
-          }
-        } else {
-          directUrl = rawInput;
+      if (!mounted) return;
+
+      final body = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && body['success'] == true) {
+        final dynamic dataNode = body['data'] ?? {};
+        final Map<String, dynamic> dataObj =
+            dataNode is Map<String, dynamic> ? dataNode : {};
+
+        // Safely extract cookies & local_storage whether server sends String or Map
+        String cookies = '';
+        final rawCookies = dataObj['cookies'];
+        if (rawCookies is String) {
+          cookies = rawCookies;
+        } else if (rawCookies is Map) {
+          cookies = rawCookies.entries
+              .map((e) => '${e.key}=${e.value}')
+              .join('; ');
         }
-        displayLabel = 'URL: ${Uri.tryParse(rawInput)?.host ?? 'Direct'}';
-      }
-      // Case B: User pasted Raw JSON (e.g. {"cookies":"accessToken=...", ...})
-      else if (rawInput.startsWith('{') && rawInput.endsWith('}')) {
-        final decoded = jsonDecode(rawInput);
-        final extracted = _extractSessionPayload(decoded);
-        cookies = extracted['cookies'] ?? '';
-        localStorage = extracted['localStorage'] ?? '{}';
-        directUrl = extracted['directUrl'] ?? '';
-        displayLabel = 'JSON Session';
-      }
-      // Case C: User pasted raw cookie string directly (e.g. accessToken=eyJ...)
-      else if (rawInput.contains('accessToken=') || rawInput.contains('=') && rawInput.contains(';')) {
-        cookies = rawInput;
-        final extracted = _extractSessionPayload({'cookies': rawInput});
-        cookies = extracted['cookies'] ?? rawInput;
-        localStorage = extracted['localStorage'] ?? '{}';
-        displayLabel = 'Direct Token';
-      }
-      // Case D: Standard License Key or Phone Number lookup via API
-      else {
-        final normalizedKey = rawInput
-            .replaceAll(RegExp(r'\s+'), '')
-            .toUpperCase();
-        displayLabel = normalizedKey;
 
-        final url = Uri.parse(
-          'https://testtok-production1.up.railway.app/api/tapsi/get-license/${Uri.encodeComponent(normalizedKey)}',
-        );
-        final response = await http.get(url).timeout(
-          const Duration(seconds: 20),
-        );
+        String localStorage = '{}';
+        final rawLs = dataObj['local_storage'];
+        if (rawLs is String && rawLs.trim().isNotEmpty) {
+          localStorage = rawLs;
+        } else if (rawLs is Map) {
+          localStorage = jsonEncode(rawLs);
+        }
+
+        await LicenseHistoryStore.saveLicense(rawKey);
+        await _loadSavedLicenses();
 
         if (!mounted) return;
+        _showStylishSnackBar('Access Granted. Initializing portal...');
 
-        dynamic body;
-        try {
-          body = jsonDecode(response.body);
-        } catch (_) {
-          throw Exception('پاسخ سرور معتبر نیست (${response.statusCode}).');
-        }
+        await Future.delayed(const Duration(milliseconds: 450));
+        if (!mounted) return;
 
-        if (response.statusCode == 200 &&
-            (body['success'] == true ||
-                body['data'] != null ||
-                body['cookies'] != null)) {
-          final extracted = _extractSessionPayload(body);
-          cookies = extracted['cookies'] ?? '';
-          localStorage = extracted['localStorage'] ?? '{}';
-          directUrl = extracted['directUrl'] ?? '';
-        } else {
-          final msg = body is Map
-              ? (body['message']?.toString() ??
-                  'کلید لایسنس نامعتبر یا منقضی شده است.')
-              : 'کلید لایسنس نامعتبر است.';
-          _showStylishSnackBar(msg, isError: true);
-          return;
-        }
-      }
-
-      await AccountHistoryStore.saveAccount(displayLabel, rawInput);
-      await _loadSavedAccounts();
-
-      if (!mounted) return;
-      _showStylishSnackBar('نشست قبلی پاکسازی شد. در حال ورود به اکانت جدید...');
-
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-
-      final targetUrl = _resolveInitialUrl(directUrl);
-
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              PortalWebEngineScreen(
-            accountLabel: displayLabel,
-            cookies: cookies,
-            localStorage: localStorage,
-            initialUrl: targetUrl,
-          ),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(
-              opacity: animation,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                PortalWebEngineScreen(
+              licenseKey: rawKey,
+              cookies: cookies,
+              localStorage: localStorage,
+            ),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.94, end: 1.0).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
                   ),
+                  child: child,
                 ),
-                child: child,
-              ),
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 400),
-        ),
-      );
-    } on TimeoutException {
-      if (!mounted) return;
-      _showStylishSnackBar(
-        'مهلت اتصال به سرور تمام شد. اینترنت یا فیلترشکن خود را بررسی کنید.',
-        isError: true,
-      );
+              );
+            },
+            transitionDuration: const Duration(milliseconds: 450),
+          ),
+        );
+      } else {
+        final msg =
+            body['message']?.toString() ?? 'Authentication failed. Invalid key.';
+        _showStylishSnackBar(msg, isError: true);
+      }
     } catch (e) {
       if (!mounted) return;
-      _showStylishSnackBar(
-        'خطا در برقراری ارتباط یا پردازش اطلاعات: ${e.toString().replaceAll('Exception: ', '')}',
-        isError: true,
-      );
+      _showStylishSnackBar('Connection error. Please try again.', isError: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -593,39 +400,36 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Directionality(
-          textDirection: TextDirection.rtl,
-          child: Row(
-            children: [
-              Icon(
-                isError
-                    ? Icons.error_outline_rounded
-                    : Icons.check_circle_rounded,
-                color: isError ? AppColors.errorRed : AppColors.neonCyan,
-                size: 22,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  message,
-                  style: const TextStyle(
-                    color: AppColors.softWhite,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w500,
-                  ),
+        content: Row(
+          children: [
+            Icon(
+              isError
+                  ? Icons.error_outline_rounded
+                  : Icons.check_circle_rounded,
+              color: isError ? AppColors.errorRed : AppColors.neonCyan,
+              size: 22,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: AppColors.softWhite,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-        backgroundColor: AppColors.darkGray.withOpacity(0.96),
+        backgroundColor: AppColors.darkGray.withOpacity(0.95),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(
             color: isError
-                ? AppColors.errorRed.withOpacity(0.45)
-                : AppColors.neonCyan.withOpacity(0.45),
+                ? AppColors.errorRed.withOpacity(0.4)
+                : AppColors.neonCyan.withOpacity(0.4),
             width: 1,
           ),
         ),
@@ -654,7 +458,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 20),
               child: FadeTransition(
                 opacity: _fadeAnim,
                 child: ScaleTransition(
@@ -671,7 +475,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 
   Widget _buildGlassCard() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 36),
       decoration: BoxDecoration(
         color: AppColors.glassBg,
         borderRadius: BorderRadius.circular(28),
@@ -692,19 +496,17 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildIconSection(),
-              const SizedBox(height: 20),
-              _buildTitle(),
-              const SizedBox(height: 6),
-              _buildSubtitle(),
               const SizedBox(height: 24),
-              _buildTargetSelector(),
-              const SizedBox(height: 18),
+              _buildTitle(),
+              const SizedBox(height: 8),
+              _buildSubtitle(),
+              const SizedBox(height: 32),
               _buildLicenseField(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
               _buildAuthButton(),
-              if (_savedAccounts.isNotEmpty) ...[
+              if (_savedLicenses.isNotEmpty) ...[
                 const SizedBox(height: 24),
-                _buildSavedAccountsSection(),
+                _buildSavedLicensesSection(),
               ],
             ],
           ),
@@ -715,25 +517,25 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 
   Widget _buildIconSection() {
     return Container(
-      width: 72,
-      height: 72,
+      width: 78,
+      height: 78,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.neonCyan.withOpacity(0.22),
+            AppColors.neonCyan.withOpacity(0.2),
             AppColors.neonCyan.withOpacity(0.05),
           ],
         ),
         border: Border.all(
-          color: AppColors.neonCyan.withOpacity(0.55),
+          color: AppColors.neonCyan.withOpacity(0.5),
           width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.neonCyan.withOpacity(0.28),
+            color: AppColors.neonCyan.withOpacity(0.3),
             blurRadius: 24,
             spreadRadius: 1,
           ),
@@ -741,7 +543,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
       ),
       child: const Icon(
         Icons.fingerprint_rounded,
-        size: 38,
+        size: 40,
         color: AppColors.neonCyan,
       ),
     );
@@ -749,90 +551,23 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 
   Widget _buildTitle() {
     return const Text(
-      'TAPSI LINK PRO',
+      'TAPSI LINK',
       style: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.w800,
+        fontSize: 24,
+        fontWeight: FontWeight.w700,
         color: AppColors.white,
-        letterSpacing: 3.5,
+        letterSpacing: 4,
       ),
     );
   }
 
   Widget _buildSubtitle() {
     return Text(
-      'ورود بدون تداخل اکانت • پشتیبانی از لایسنس، لینک و JSON',
-      textAlign: TextAlign.center,
+      'Enter your license key to proceed',
       style: TextStyle(
-        fontSize: 12.5,
-        color: AppColors.softWhite.withOpacity(0.65),
-      ),
-    );
-  }
-
-  Widget _buildTargetSelector() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.deepBlack.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.glassBorder),
-      ),
-      child: Row(
-        children: [
-          _buildTargetChip('tapsi', 'تپسی', Icons.local_taxi_rounded),
-          _buildTargetChip(
-            'supermarket',
-            'سوپرمارکت',
-            Icons.shopping_bag_rounded,
-          ),
-          _buildTargetChip('okala', 'اکالا', Icons.storefront_rounded),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTargetChip(String id, String label, IconData icon) {
-    final isSelected = _selectedStartTarget == id;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedStartTarget = id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppColors.neonCyan.withOpacity(0.18)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            border: isSelected
-                ? Border.all(color: AppColors.neonCyan.withOpacity(0.6))
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: isSelected
-                    ? AppColors.neonCyan
-                    : AppColors.softWhite.withOpacity(0.5),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected
-                      ? AppColors.neonCyan
-                      : AppColors.softWhite.withOpacity(0.65),
-                ),
-              ),
-            ],
-          ),
-        ),
+        fontSize: 13,
+        color: AppColors.softWhite.withOpacity(0.6),
+        letterSpacing: 0.5,
       ),
     );
   }
@@ -857,16 +592,15 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
         focusNode: _focusNode,
         style: const TextStyle(
           color: AppColors.white,
-          fontSize: 14.5,
-          letterSpacing: 1.0,
+          fontSize: 15,
+          letterSpacing: 1.2,
         ),
         cursorColor: AppColors.neonCyan,
         decoration: InputDecoration(
-          hintText: 'TAPSI-XXXX-XXXX / JSON / URL',
+          hintText: 'TAPSI-XXXX-XXXX',
           hintStyle: TextStyle(
             color: AppColors.softWhite.withOpacity(0.3),
-            letterSpacing: 1.2,
-            fontSize: 13,
+            letterSpacing: 1.5,
           ),
           prefixIcon: Icon(
             Icons.vpn_key_rounded,
@@ -886,7 +620,6 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
                     size: 18,
                   ),
                   onPressed: () => setState(() => _licenseController.clear()),
-                  tooltip: 'پاک کردن',
                 ),
               IconButton(
                 icon: const Icon(
@@ -895,14 +628,14 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
                   size: 20,
                 ),
                 onPressed: _pasteFromClipboard,
-                tooltip: 'جایگذاری از کلیپ‌بورد',
+                tooltip: 'Paste License',
               ),
             ],
           ),
           filled: true,
-          fillColor: AppColors.deepBlack.withOpacity(0.65),
+          fillColor: AppColors.deepBlack.withOpacity(0.6),
           contentPadding:
-              const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(20),
             borderSide: BorderSide.none,
@@ -931,11 +664,11 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
   Widget _buildAuthButton() {
     return SizedBox(
       width: double.infinity,
-      height: 54,
+      height: 56,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
               color: AppColors.neonCyan.withOpacity(_isLoading ? 0.1 : 0.35),
@@ -952,7 +685,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
             disabledBackgroundColor: AppColors.neonCyan.withOpacity(0.6),
             foregroundColor: AppColors.deepBlack,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(20),
             ),
             elevation: 0,
           ),
@@ -971,11 +704,11 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
                     Icon(Icons.lock_open_rounded, size: 20),
                     SizedBox(width: 10),
                     Text(
-                      'AUTHENTICATE & CLEAN LOGIN',
+                      'AUTHENTICATE',
                       style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 2,
                       ),
                     ),
                   ],
@@ -985,7 +718,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
     );
   }
 
-  Widget _buildSavedAccountsSection() {
+  Widget _buildSavedLicensesSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -994,8 +727,8 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
           children: [
             TextButton.icon(
               onPressed: () async {
-                await AccountHistoryStore.clearAll();
-                await _loadSavedAccounts();
+                await LicenseHistoryStore.clearAll();
+                await _loadSavedLicenses();
               },
               icon: const Icon(
                 Icons.delete_sweep_rounded,
@@ -1008,7 +741,7 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
               ),
             ),
             Text(
-              'لایسنس‌ها و اکانت‌های اخیر (سوییچ سریع):',
+              'لایسنس‌های اخیر:',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -1019,13 +752,13 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
         ),
         const SizedBox(height: 6),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 150),
+          constraints: const BoxConstraints(maxHeight: 140),
           child: ListView.separated(
             shrinkWrap: true,
-            itemCount: _savedAccounts.length,
+            itemCount: _savedLicenses.length,
             separatorBuilder: (_, __) => const SizedBox(height: 6),
             itemBuilder: (context, index) {
-              final item = _savedAccounts[index];
+              final item = _savedLicenses[index];
               return Container(
                 decoration: BoxDecoration(
                   color: AppColors.deepBlack.withOpacity(0.55),
@@ -1037,12 +770,12 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                   leading: const Icon(
-                    Icons.account_circle_outlined,
+                    Icons.vpn_key_outlined,
                     color: AppColors.neonCyan,
-                    size: 20,
+                    size: 18,
                   ),
                   title: Text(
-                    item.keyOrLabel,
+                    item.licenseKey,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1058,15 +791,15 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
                       color: AppColors.softWhite.withOpacity(0.5),
                     ),
                     onPressed: () async {
-                      await AccountHistoryStore.removeAccount(item.rawInput);
-                      await _loadSavedAccounts();
+                      await LicenseHistoryStore.removeLicense(item.licenseKey);
+                      await _loadSavedLicenses();
                     },
                   ),
                   onTap: _isLoading
                       ? null
                       : () {
-                          _licenseController.text = item.rawInput;
-                          _authenticate(item.rawInput);
+                          _licenseController.text = item.licenseKey;
+                          _authenticate(item.licenseKey);
                         },
                 ),
               );
@@ -1079,21 +812,19 @@ class _AuthenticationScreenState extends State<AuthenticationScreen>
 }
 
 // ────────────────────────────────────────────────────────────────────
-// SCREEN 2: ISOLATED PORTAL WEB ENGINE (WITH GPS, POPUP & SSO FIX)
+// SCREEN 2: TAPSI PORTAL WEB ENGINE (TAPSI + TAPSI MARKET FIXED)
 // ────────────────────────────────────────────────────────────────────
 
 class PortalWebEngineScreen extends StatefulWidget {
-  final String accountLabel;
+  final String licenseKey;
   final String cookies;
   final String localStorage;
-  final String initialUrl;
 
   const PortalWebEngineScreen({
     super.key,
-    required this.accountLabel,
+    required this.licenseKey,
     required this.cookies,
     required this.localStorage,
-    required this.initialUrl,
   });
 
   @override
@@ -1104,14 +835,19 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
   InAppWebViewController? _webViewController;
   bool _isReady = false;
   double _progress = 0;
-  String _currentUrl = '';
 
-  // Selected fallback city coordinates for quick map/address fixing when GPS is off
-  double _fallbackLat = 35.6997; // Tehran Azadi Square default
+  double _fallbackLat = 35.6997; // Tehran Azadi default
   double _fallbackLng = 51.3380;
-  String _fallbackCityName = 'تهران';
+  String _fallbackCityName = 'تهران (میدان آزادی)';
 
-  static const Set<String> _reservedCookieAttributes = {
+  final List<String> _targetDomains = [
+    '.tapsi.cab',
+    '.tapsi.ir',
+    '.tapsi.markets',
+    '.tapsi.shop',
+  ];
+
+  static const Set<String> _reservedCookieAttrs = {
     'path',
     'domain',
     'expires',
@@ -1119,20 +855,19 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
     'secure',
     'httponly',
     'samesite',
-    'priority',
   };
 
   @override
   void initState() {
     super.initState();
-    _initializeCleanSession();
+    _initializeSession();
   }
 
-  Future<void> _initializeCleanSession() async {
-    // 1. Complete wipe of any leftover cookies, localStorage, IndexedDB, or cache
+  Future<void> _initializeSession() async {
+    // 1. Wipe all old cookies, localStorage, IndexedDB, and cache across all domains
     await SessionSanitizer.deepCleanAllWebData();
 
-    // 2. Set cookies across all Tapsi, Supermarket, and Okala domains
+    // 2. Set cookies for Tapsi & Tapsi Market domains
     final cookieManager = CookieManager.instance();
     await _setCookiesForAllDomains(cookieManager);
 
@@ -1143,78 +878,81 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
 
   Future<void> _setCookiesForAllDomains(CookieManager cookieManager) async {
     final cookieParts = widget.cookies.split(';');
-    final Map<String, String> validCookies = {};
 
-    for (final cookiePart in cookieParts) {
-      final trimmed = cookiePart.trim();
-      if (trimmed.isEmpty) continue;
+    for (final domain in _targetDomains) {
+      final url = WebUri('https://${domain.replaceFirst('.', '')}');
 
-      final eqIndex = trimmed.indexOf('=');
-      if (eqIndex <= 0) continue;
+      for (final cookiePart in cookieParts) {
+        final trimmed = cookiePart.trim();
+        if (trimmed.isEmpty) continue;
 
-      final name = trimmed.substring(0, eqIndex).trim();
-      final value = trimmed.substring(eqIndex + 1).trim();
+        final eqIndex = trimmed.indexOf('=');
+        if (eqIndex <= 0) continue;
 
-      if (_reservedCookieAttributes.contains(name.toLowerCase())) continue;
-      if (name.isEmpty) continue;
+        final name = trimmed.substring(0, eqIndex).trim();
+        final value = trimmed.substring(eqIndex + 1).trim();
 
-      validCookies[name] = value;
-    }
+        if (_reservedCookieAttrs.contains(name.toLowerCase())) continue;
 
-    for (final domain in SessionSanitizer.allDomains) {
-      final cleanHost = domain.startsWith('.') ? domain.substring(1) : domain;
-      final url = WebUri('https://$cleanHost');
-
-      for (final entry in validCookies.entries) {
-        try {
-          await cookieManager.setCookie(
-            url: url,
-            name: entry.key,
-            value: entry.value,
-            domain: domain.startsWith('.') ? domain : null,
-            isSecure: true,
-            path: '/',
-            sameSite: HTTPCookieSameSitePolicy.NONE,
-          );
-        } catch (_) {}
+        await cookieManager.setCookie(
+          url: url,
+          name: name,
+          value: value,
+          domain: domain,
+          isSecure: true,
+          path: '/',
+        );
       }
     }
   }
 
-  /// Injects LocalStorage ONLY ONCE per session per origin so user actions
-  /// (like adding addresses, cart items, or SSO redirects) are never overwritten!
-  /// Also provides automatic Geolocation fallback so "موقعیت من" always works.
-  String _buildSmartUserScript() {
-    // Encode raw JSON string as a safe JS string literal via jsonEncode
+  /// Crucial Fix:
+  /// 1. Injects Tapsi Cab's localStorage ONLY on `tapsi.cab` (so it NEVER corrupts `tapsi.markets` during SSO!).
+  /// 2. On `tapsi.markets` / `tapsi.shop`, clears any stale previous account's localStorage ONCE at session start
+  ///    before Market's scripts run, allowing Tapsi Market to open cleanly with the active Tapsi account!
+  /// 3. Provides instant GPS fallback so "موقعیت من" on Tapsi Market's map never hangs.
+  String _buildLocalStorageScript() {
     final safeJsJsonString = jsonEncode(widget.localStorage);
+    final safeKeyGuard = jsonEncode(widget.licenseKey);
 
     return '''
     (function() {
       try {
-        var sessionGuardKey = '__tapsi_link_session_v2_' + ${jsonEncode(widget.accountLabel)};
-        if (window.sessionStorage.getItem(sessionGuardKey) !== '1') {
-          // Wipe any stale keys from previous account on this origin first
-          window.localStorage.clear();
+        var host = window.location.hostname || '';
+        var licenseId = $safeKeyGuard;
+
+        if (host.indexOf('tapsi.cab') !== -1) {
+          var cabInitKey = '__tapsi_cab_init_' + licenseId;
+          if (window.sessionStorage.getItem(cabInitKey) !== '1') {
+            window.localStorage.clear();
+            window.sessionStorage.setItem(cabInitKey, '1');
+          }
           var rawJson = $safeJsJsonString;
           var data = JSON.parse(rawJson);
           if (data && typeof data === 'object') {
             for (var key in data) {
               if (Object.prototype.hasOwnProperty.call(data, key)) {
-                var val = data[key];
                 window.localStorage.setItem(
                   key,
-                  typeof val === 'string' ? val : JSON.stringify(val)
+                  typeof data[key] === 'string' ? data[key] : JSON.stringify(data[key])
                 );
               }
             }
           }
-          window.sessionStorage.setItem(sessionGuardKey, '1');
+        } else if (host.indexOf('tapsi.markets') !== -1 || host.indexOf('tapsi.shop') !== -1) {
+          // Wipe any leftover account from previous sessions ONCE before Tapsi Market's SSO runs,
+          // and DO NOT overwrite Market's localStorage with Tapsi Cab's keys!
+          var marketInitKey = '__tapsi_market_init_' + licenseId;
+          if (window.sessionStorage.getItem(marketInitKey) !== '1') {
+            window.localStorage.clear();
+            window.sessionStorage.setItem(marketInitKey, '1');
+          }
         }
-      } catch (e) {
-        console.error('Session initialization error:', e);
+      } catch(e) {
+        console.error('LocalStorage injection error:', e);
       }
 
-      // Fix Geolocation hanging in WebView when GPS is off or blocked by VPN
+      // Geolocation fallback so "موقعیت من" (My Location) in Tapsi & Tapsi Market works even if GPS is off
       try {
         if (navigator.geolocation) {
           var origGetCurrentPosition = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
@@ -1268,38 +1006,36 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                   }
                 }
               },
-               { enableHighAccuracy: true, timeout: 2200, maximumAge: 0 }
+              { enableHighAccuracy: true, timeout: 2200, maximumAge: 0 }
             );
           };
         }
-      } catch (e) {}
+      } catch(e) {}
     })();
     ''';
   }
 
-  /// Force re-syncs current account across Tapsi and Supermarket if user notices any mismatch
   Future<void> _forceSyncCurrentAccount() async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Directionality(
           textDirection: TextDirection.rtl,
-          child: Text('در حال پاکسازی کش دامنه و همگام‌سازی مجدد اکانت فعلی...'),
+          child: Text('در حال پاکسازی کش و همگام‌سازی مجدد اکانت تپسی...'),
         ),
         duration: Duration(seconds: 2),
       ),
     );
 
-    final currentUrl = await _webViewController?.getUrl();
     await SessionSanitizer.deepCleanAllWebData(_webViewController);
     await _setCookiesForAllDomains(CookieManager.instance());
 
     if (_webViewController != null) {
       await _webViewController!.evaluateJavascript(
-        source: _buildSmartUserScript(),
+        source: _buildLocalStorageScript(),
       );
       await _webViewController!.loadUrl(
         urlRequest: URLRequest(
-          url: currentUrl ?? WebUri('https://app.tapsi.cab/profile/'),
+          url: WebUri('https://app.tapsi.cab/profile/'),
         ),
       );
     }
@@ -1340,7 +1076,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'تنظیم موقعیت مکانی هوشمند (رفع قفل نقشه)',
+                          'تنظیم موقعیت مکانی نقشه (تپسی و سوپرمارکت)',
                           style: TextStyle(
                             color: AppColors.white,
                             fontSize: 15,
@@ -1352,7 +1088,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'اگر GPS گوشی خاموش است یا دکمه «موقعیت من» در سوپرمارکت/اکالا کار نمی‌کند، شهر مورد نظر را انتخاب کنید:',
+                    'اگر GPS گوشی خاموش است، شهر مورد نظر را انتخاب کنید تا دکمه «موقعیت من» روی نقشه بلافاصله کار کند:',
                     style: TextStyle(
                       color: AppColors.softWhite.withOpacity(0.7),
                       fontSize: 12,
@@ -1405,7 +1141,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                                 content: Directionality(
                                   textDirection: TextDirection.rtl,
                                   child: Text(
-                                    'موقعیت روی «$_fallbackCityName» تنظیم شد. اکنون روی دکمه «موقعیت من» در نقشه بزنید.',
+                                    'موقعیت روی «$_fallbackCityName» تنظیم شد.',
                                   ),
                                 ),
                               ),
@@ -1444,7 +1180,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
             return FadeTransition(
               opacity: animation,
               child: ScaleTransition(
-                scale: Tween<double>(begin: 1.04, end: 1.0).animate(
+                scale: Tween<double>(begin: 1.05, end: 1.0).animate(
                   CurvedAnimation(
                     parent: animation,
                     curve: Curves.easeOutCubic,
@@ -1454,7 +1190,7 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
               ),
             );
           },
-          transitionDuration: const Duration(milliseconds: 400),
+          transitionDuration: const Duration(milliseconds: 450),
         ),
       );
     }
@@ -1464,103 +1200,120 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(28),
         decoration: BoxDecoration(
-          color: AppColors.darkGray.withOpacity(0.96),
+          color: AppColors.darkGray.withOpacity(0.95),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: AppColors.glassBorder, width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.neonCyan.withOpacity(0.1),
+              blurRadius: 30,
+              spreadRadius: 2,
+            ),
+          ],
         ),
-        child: Directionality(
-          textDirection: TextDirection.rtl,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.errorRed.withOpacity(0.12),
-                  border: Border.all(
-                    color: AppColors.errorRed.withOpacity(0.5),
-                    width: 1.5,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.errorRed.withOpacity(0.1),
+                    border: Border.all(
+                      color: AppColors.errorRed.withOpacity(0.5),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.logout_rounded,
+                    color: AppColors.errorRed,
+                    size: 28,
                   ),
                 ),
-                child: const Icon(
-                  Icons.logout_rounded,
-                  color: AppColors.errorRed,
-                  size: 26,
+                const SizedBox(height: 20),
+                const Text(
+                  'RESET SESSION',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.white,
+                    letterSpacing: 2,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'خروج و پاکسازی کامل اکانت',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.white,
+                const SizedBox(height: 12),
+                Text(
+                  'This will clear all Tapsi & Tapsi Market session data and return to the license screen.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.softWhite.withOpacity(0.7),
+                    height: 1.5,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'تمام کوکی‌ها، حافظه LocalStorage و دیتابیس‌های تپسی و سوپرمارکت/اکالا به طور کامل پاک می‌شوند تا با اکانت بعدی تداخل نداشته باشند.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: AppColors.softWhite.withOpacity(0.75),
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 46,
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: AppColors.softWhite.withOpacity(0.3),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: AppColors.softWhite.withOpacity(0.3),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text(
-                          'انصراف',
-                          style: TextStyle(
-                            color: AppColors.softWhite,
-                            fontWeight: FontWeight.w600,
+                          child: const Text(
+                            'CANCEL',
+                            style: TextStyle(
+                              color: AppColors.softWhite,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: 46,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.errorRed,
-                          foregroundColor: AppColors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.errorRed,
+                            foregroundColor: AppColors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
-                        ),
-                        child: const Text(
-                          'پاکسازی و خروج',
-                          style: TextStyle(fontWeight: FontWeight.w700),
+                          child: const Text(
+                            'CONFIRM',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1,
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1582,72 +1335,129 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
       },
       child: Scaffold(
         backgroundColor: AppColors.deepBlack,
-        appBar: _isReady ? _buildPortalAppBar() : null,
+        appBar: _isReady
+            ? AppBar(
+                backgroundColor: AppColors.darkGray.withOpacity(0.9),
+                elevation: 0,
+                toolbarHeight: 50,
+                leading: IconButton(
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: AppColors.softWhite,
+                    size: 18,
+                  ),
+                  tooltip: 'بازگشت',
+                  onPressed: () async {
+                    if (_webViewController != null &&
+                        await _webViewController!.canGoBack()) {
+                      await _webViewController!.goBack();
+                    }
+                  },
+                ),
+                title: const Text(
+                  'TAPSI LINK',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.white,
+                    letterSpacing: 2,
+                  ),
+                ),
+                actions: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.my_location_rounded,
+                      color: AppColors.neonGreen,
+                      size: 20,
+                    ),
+                    tooltip: 'تنظیم شهر روی نقشه',
+                    onPressed: _showLocationPickerSheet,
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.sync_rounded,
+                      color: AppColors.gold,
+                      size: 20,
+                    ),
+                    tooltip: 'همگام‌سازی مجدد اکانت',
+                    onPressed: _forceSyncCurrentAccount,
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.refresh_rounded,
+                      color: AppColors.softWhite,
+                      size: 20,
+                    ),
+                    tooltip: 'رفرش صفحه',
+                    onPressed: () => _webViewController?.reload(),
+                  ),
+                  Container(
+                    margin: const EdgeInsets.symmetric(
+                      vertical: 7,
+                      horizontal: 10,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(
+                        Icons.logout_rounded,
+                        color: AppColors.neonCyan,
+                        size: 20,
+                      ),
+                      onPressed: _resetSession,
+                      tooltip: 'Reset Session',
+                      style: IconButton.styleFrom(
+                        backgroundColor: AppColors.deepBlack.withOpacity(0.8),
+                        side: BorderSide(
+                          color: AppColors.neonCyan.withOpacity(0.4),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : null,
         body: SafeArea(
           child: Stack(
             children: [
               if (_isReady)
                 InAppWebView(
                   initialUrlRequest: URLRequest(
-                    url: WebUri(widget.initialUrl),
+                    url: WebUri('https://app.tapsi.cab/profile/'),
                   ),
                   initialUserScripts: UnmodifiableListView<UserScript>([
                     UserScript(
-                      source: _buildSmartUserScript(),
+                      source: _buildLocalStorageScript(),
                       injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
                     ),
                   ]),
-                  gestureRecognizers: {
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => EagerGestureRecognizer(),
-                    ),
-                  },
+                  // Exact WebView settings that allow Tapsi Market SSO to open natively
+                  // without hijacking image taps or losing Referer headers
                   initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
-                    javaScriptCanOpenWindowsAutomatically: true,
-                    supportMultipleWindows: true,
                     domStorageEnabled: true,
                     databaseEnabled: true,
                     geolocationEnabled: true,
                     thirdPartyCookiesEnabled: true,
                     sharedCookiesEnabled: true,
+                    supportMultipleWindows: false,
                     clearSessionCache: false,
                     clearCache: false,
                     cacheEnabled: true,
-                    allowsInlineMediaPlayback: true,
-                    mediaPlaybackRequiresUserGesture: false,
                     mixedContentMode:
                         MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
                     useWideViewPort: true,
-                    loadWithOverviewMode: true,
-                    supportZoom: false,
+                    supportZoom: true,
                     userAgent:
-                        'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+                        'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
                   ),
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
-                  },
-                  onLoadStart: (controller, url) {
-                    if (mounted) {
-                      setState(() => _currentUrl = url?.toString() ?? '');
-                    }
                   },
                   onProgressChanged: (controller, progress) {
                     if (mounted) {
                       setState(() => _progress = progress / 100.0);
                     }
                   },
-                  // Fixes buttons that open new windows / target="_blank" in Okala & Tapsi
-                  onCreateWindow: (controller, createWindowAction) async {
-                    final targetUrl = createWindowAction.request.url;
-                    if (targetUrl != null) {
-                      await controller.loadUrl(
-                        urlRequest: URLRequest(url: targetUrl),
-                      );
-                    }
-                    return false;
-                  },
-                  // Fixes "موقعیت من" (My Location) button on the map
                   onGeolocationPermissionsShowPrompt:
                       (controller, origin) async {
                     return GeolocationPermissionShowPromptResponse(
@@ -1662,32 +1472,27 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                       action: PermissionResponseAction.GRANT,
                     );
                   },
-                  onReceivedServerTrustAuthRequest:
-                      (controller, challenge) async {
-                    return ServerTrustAuthResponse(
-                      action: ServerTrustAuthResponseAction.PROCEED,
-                    );
-                  },
                 )
               else
                 Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(
+                      SizedBox(
                         width: 40,
                         height: 40,
                         child: CircularProgressIndicator(
                           strokeWidth: 2.5,
-                          color: AppColors.neonCyan,
+                          color: AppColors.neonCyan.withOpacity(0.8),
                         ),
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 20),
                       Text(
-                        'پاکسازی نشست قبلی و آماده‌سازی اکانت...',
+                        'INITIALIZING SECURE SESSION...',
                         style: TextStyle(
-                          fontSize: 13,
-                          color: AppColors.softWhite.withOpacity(0.7),
+                          fontSize: 12,
+                          color: AppColors.softWhite.withOpacity(0.6),
+                          letterSpacing: 2,
                         ),
                       ),
                     ],
@@ -1701,138 +1506,13 @@ class _PortalWebEngineScreenState extends State<PortalWebEngineScreen> {
                   child: LinearProgressIndicator(
                     value: _progress,
                     backgroundColor: Colors.transparent,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.neonCyan,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      AppColors.neonCyan.withOpacity(0.8),
                     ),
                     minHeight: 2.5,
                   ),
                 ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  PreferredSizeWidget _buildPortalAppBar() {
-    final isOkala = _currentUrl.contains('okala');
-    return AppBar(
-      backgroundColor: AppColors.darkGray.withOpacity(0.95),
-      elevation: 0,
-      toolbarHeight: 52,
-      titleSpacing: 8,
-      leading: IconButton(
-        icon: const Icon(
-          Icons.arrow_back_ios_new_rounded,
-          color: AppColors.softWhite,
-          size: 18,
-        ),
-        tooltip: 'بازگشت به صفحه قبل',
-        onPressed: () async {
-          if (_webViewController != null &&
-              await _webViewController!.canGoBack()) {
-            await _webViewController!.goBack();
-          }
-        },
-      ),
-      title: Row(
-        children: [
-          _buildQuickNavPill(
-            label: 'تپسی',
-            isActive: !isOkala,
-            onTap: () {
-              _webViewController?.loadUrl(
-                urlRequest: URLRequest(
-                  url: WebUri('https://app.tapsi.cab/'),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 6),
-          _buildQuickNavPill(
-            label: 'اکالا',
-            isActive: isOkala,
-            onTap: () {
-              _webViewController?.loadUrl(
-                urlRequest: URLRequest(
-                  url: WebUri('https://www.okala.com/'),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-      actions: [
-        IconButton(
-          icon: const Icon(
-            Icons.my_location_rounded,
-            color: AppColors.neonGreen,
-            size: 20,
-          ),
-          tooltip: 'تنظیم شهر / رفع قفل نقشه',
-          onPressed: _showLocationPickerSheet,
-        ),
-        IconButton(
-          icon: const Icon(
-            Icons.sync_problem_rounded,
-            color: AppColors.gold,
-            size: 20,
-          ),
-          tooltip: 'همگام‌سازی و رفع تداخل اکانت',
-          onPressed: _forceSyncCurrentAccount,
-        ),
-        IconButton(
-          icon: const Icon(
-            Icons.refresh_rounded,
-            color: AppColors.softWhite,
-            size: 20,
-          ),
-          tooltip: 'بارگذاری مجدد',
-          onPressed: () => _webViewController?.reload(),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(right: 6),
-          child: IconButton(
-            icon: const Icon(
-              Icons.logout_rounded,
-              color: AppColors.errorRed,
-              size: 20,
-            ),
-            tooltip: 'تعویض اکانت / خروج امن',
-            onPressed: _resetSession,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickNavPill({
-    required String label,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: isActive
-              ? AppColors.neonCyan.withOpacity(0.18)
-              : AppColors.deepBlack.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isActive
-                ? AppColors.neonCyan.withOpacity(0.6)
-                : AppColors.glassBorder,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w700,
-            color: isActive ? AppColors.neonCyan : AppColors.softWhite,
           ),
         ),
       ),
